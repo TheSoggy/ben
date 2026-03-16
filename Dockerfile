@@ -46,7 +46,7 @@ COPY src/openinglead /app/openinglead/
 COPY bin /app/bin/
 COPY src/config /app/config/
 COPY models /app/models/
-COPY BBA/CC/ /BBA/CC/
+COPY BBA/CC/ /app/BBA/CC/
 
 # BBA imports "from src.objects" expecting repo-root/src/ layout
 # Create /src symlink so the import resolves to /app/objects.py
