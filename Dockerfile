@@ -48,6 +48,10 @@ COPY src/config /app/config/
 COPY models /app/models/
 COPY BBA/CC/ /BBA/CC/
 
+# BBA imports "from src.objects" expecting repo-root/src/ layout
+# Create /src symlink so the import resolves to /app/objects.py
+RUN ln -s /app /src
+
 EXPOSE 8085
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
