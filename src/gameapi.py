@@ -624,14 +624,15 @@ if verbose:
     print("Loading sampler")
 sampler = Sample.from_conf(configuration, verbose)
 
-if sys.platform != 'win32':
-    print("Disabling PIMC/BBA as platform is not win32")
+# PIMC/ACE use .NET assemblies via pythonnet — works on macOS/Linux with CoreCLR
+# Only disable if pythonnet/clr is not available at all
+try:
+    import clr
+    print("pythonnet available — PIMC/ACE enabled")
+except ImportError:
+    print("pythonnet not available — disabling PIMC")
     models.pimc_use_declaring = False
     models.pimc_use_defending = False
-    #models.use_bba = False
-    #models.consult_bba = False
-    #models.use_bba_rollout = False
-    #models.use_bba_to_count_aces = False
 
 if models.use_bba:
     print("Using BBA for bidding")
@@ -1255,6 +1256,8 @@ def cuebid():
 @app.route('/explain')
 def explain():
     t_start = time.time()
+    if not models.use_bba:
+        return json.dumps({"explanation": "Bid explanation requires BBA module (use_bba = True in config)", "Alert": False}), 200
     from bba.BBA import BBABotBid
     # First we extract the hands and seat
     seat = request.args.get("seat")
@@ -1286,6 +1289,8 @@ def explain():
 @app.route('/explain_auction')
 def explain_auction():
     t_start = time.time()
+    if not models.use_bba:
+        return json.dumps({"explanation": "Auction explanation requires BBA module (use_bba = True in config)", "Alert": False}), 200
     from bba.BBA import BBABotBid
     # First we extract the hands and seat
     seat = request.args.get("seat")
