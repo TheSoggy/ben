@@ -57,4 +57,4 @@ EXPOSE 8085
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -f http://localhost:8085/ || exit 1
 
-CMD ["python3.12", "gameapi.py", "--port", "8085", "--config", "config/bridgearena_api.conf"]
+CMD ["python3.12", "gameapi.py", "--host", "0.0.0.0", "--port", "8085", "--config", "config/bridgearena_api.conf"]
