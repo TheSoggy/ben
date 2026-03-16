@@ -790,7 +790,7 @@ logger.setLevel(logging.INFO)
 logger.propagate = False  # Prevent log messages from going to the root logger
 
 # Define allowed hosts
-ALLOWED_HOSTS = {'localhost', '127.0.0.1', 'ben.aalborgdata.dk', 'remote.aalborgdata.dk'}
+ALLOWED_HOSTS = {'localhost', '127.0.0.1', 'ben.aalborgdata.dk', 'remote.aalborgdata.dk', 'bridgearena-ben'}
 class SilentAbort(HTTPException):
     code = 444  # Non-standard code to terminate without response
     description = "No Response"
