@@ -349,39 +349,49 @@ def load_dotnet_core_assembly(assembly_path, verbose = False):
         if verbose:
             print(f"Loading {assembly_path}")
 
-        from clr_loader import get_coreclr
+        # Check if pythonnet runtime is already initialized (e.g. by PYTHONNET_RUNTIME=coreclr)
+        import pythonnet
         from pythonnet import set_runtime
+        runtime_loaded = pythonnet._RUNTIME is not None
 
-        asm_name = os.path.basename(assembly_path)
-        if 'EPBot8739' in asm_name:
-            tfm, fw_ver = "net10.0", "10.0.0"
-        else:
-            tfm, fw_ver = "net9.0", "9.0.0"
-        rc = {
-            "runtimeOptions": {
-                "tfm": tfm,
-                "framework": {
-                    "name": "Microsoft.NETCore.App",
-                    "version": fw_ver
+        if not runtime_loaded:
+            from clr_loader import get_coreclr
+
+            asm_name = os.path.basename(assembly_path)
+            if 'EPBot8739' in asm_name:
+                tfm, fw_ver = "net10.0", "10.0.0"
+            else:
+                tfm, fw_ver = "net9.0", "9.0.0"
+            rc = {
+                "runtimeOptions": {
+                    "tfm": tfm,
+                    "framework": {
+                        "name": "Microsoft.NETCore.App",
+                        "version": fw_ver
+                    }
                 }
             }
-        }
-        rc_path = os.path.join(tempfile.gettempdir(), f"{asm_name}.runtimeconfig.json")
-        with open(rc_path, "w") as f:
-            json.dump(rc, f)
+            rc_path = os.path.join(tempfile.gettempdir(), f"{asm_name}.runtimeconfig.json")
+            with open(rc_path, "w") as f:
+                json.dump(rc, f)
 
-        runtime = get_coreclr(runtime_config=rc_path)
-        set_runtime(runtime)
+            runtime = get_coreclr(runtime_config=rc_path)
+            set_runtime(runtime)
 
         import clr
-        dll_dir = os.path.dirname(os.path.abspath(assembly_path + '.dll'))
-        if dll_dir not in sys.path:
-            sys.path.insert(0, dll_dir)
-        clr.AddReference(os.path.basename(assembly_path))
+
+        # Use AssemblyLoadContext for CoreCLR (works cross-platform)
+        full_path = assembly_path if assembly_path.endswith('.dll') else assembly_path + '.dll'
+        full_path = os.path.abspath(full_path)
+        import System
+        load_context = System.Runtime.Loader.AssemblyLoadContext.Default
+        load_context.LoadFromAssemblyPath(full_path)
 
         if verbose:
             print(f"Loaded .NET Core assembly: {assembly_path}")
     except Exception as e:
+        asm_name = os.path.basename(assembly_path)
+        tfm = "net10.0" if 'EPBot8739' in asm_name else "net9.0"
         msg = f"Failed to load .NET Core assembly '{assembly_path}': {e}"
         if tfm == "net10.0":
             msg += (

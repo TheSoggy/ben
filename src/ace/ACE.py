@@ -41,12 +41,7 @@ else:
     else:
         BIN_FOLDER = os.path.join(BEN_HOME, 'bin')
 
-if sys.platform == 'win32':
-    ACEDLL_LIB = 'Brill.Ace'
-elif sys.platform == 'darwin':
-    ACEDLL_LIB = 'N/A'
-else:
-    ACEDLL_LIB = 'N/A'
+ACEDLL_LIB = 'Brill.Ace'
 
 ACEDLL_PATH = os.path.join(BIN_FOLDER, ACEDLL_LIB)
 
@@ -62,8 +57,11 @@ class ACEDLL:
             with cls._lock:  # Ensure only one thread can enter this block at a time
                 if cls._dll_loaded is None:  # Double-checked locking
                     try:
-                        # Load the .NET assembly and import the types and classes from the assembly
-                        util.load_dotnet_framework_assembly(ACEDLL_PATH, verbose)
+                        # Load the .NET assembly
+                        if sys.platform == 'win32':
+                            util.load_dotnet_framework_assembly(ACEDLL_PATH, verbose)
+                        else:
+                            util.load_dotnet_core_assembly(ACEDLL_PATH, verbose)
 
                         from Brill.Ace import Game, Engine, GameOptions, ConstraintSet, Constraints, Range, Model, Contract, Extensions, BcalcddsSolver, HaglundSolver
                         Player = Extensions.Player

@@ -36,12 +36,7 @@ else:
     else:
         BIN_FOLDER = os.path.join(BEN_HOME, 'bin')
 
-if sys.platform == 'win32':
-    BGADLL_LIB = 'BGADLL'
-elif sys.platform == 'darwin':
-    BGADLL_LIB = 'N/A'
-else:
-    BGADLL_LIB = 'N/A'
+BGADLL_LIB = 'BGADLL'
 
 BGADLL_PATH = os.path.join(BIN_FOLDER, BGADLL_LIB)
 
@@ -57,8 +52,11 @@ class BGADLL:
             with cls._lock:  # Ensure only one thread can enter this block at a time
                 if cls._dll_loaded is None:  # Double-checked locking
                     try:
-                        # Load the .NET assembly and import the types and classes from the assembly
-                        util.load_dotnet_framework_assembly(BGADLL_PATH, verbose)
+                        # Load the .NET assembly
+                        if sys.platform == 'win32':
+                            util.load_dotnet_framework_assembly(BGADLL_PATH, verbose)
+                        else:
+                            util.load_dotnet_core_assembly(BGADLL_PATH, verbose)
 
                         from BGADLL import PIMC, Hand, Play, Constraints, Extensions, Macros, Card
 

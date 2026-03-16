@@ -34,25 +34,32 @@ def load_dotnet_framework_assembly(assembly_path, verbose = False):
     return None  # Assembly types can be imported directly in this mode
 
 def load_dotnet_core_assembly(assembly_path, verbose = False):
-    """  
+    """
     Parameters:
         assembly_path (str): The path to the .NET assembly without the `.dll` extension.
-    
+
     Returns:
         The loaded assembly reference or raises an exception on failure.
     """
-    import clr
     if verbose:
         print(f"Loading {assembly_path}")
-    # Pythonnet 3.x
-    from clr_loader import get_coreclr
-    from pythonnet import set_runtime
-    runtime = get_coreclr()
-    set_runtime(runtime)
 
+    # Pythonnet 3.x — only set runtime if not already loaded
+    from pythonnet import get_runtime, set_runtime
+    try:
+        get_runtime()
+        # Runtime already initialized (e.g. by 'import clr')
+    except RuntimeError:
+        from clr_loader import get_coreclr
+        runtime = get_coreclr()
+        set_runtime(runtime)
+
+    import clr
     import System
+    full_path = assembly_path if assembly_path.endswith('.dll') else assembly_path + '.dll'
+    full_path = os.path.abspath(full_path)
     load_context = System.Runtime.Loader.AssemblyLoadContext.Default
-    loaded_assembly = load_context.LoadFromAssemblyPath(assembly_path)
+    loaded_assembly = load_context.LoadFromAssemblyPath(full_path)
     if verbose:
         print("Loaded .NET Core assembly using clr_loader")
     return loaded_assembly
