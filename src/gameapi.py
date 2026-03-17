@@ -2280,6 +2280,90 @@ def double_dummy():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route('/solve_board', methods=['POST'])
+def solve_board():
+    """
+    Solve a board position using DDS SolveBoardPBN.
+    Returns DD trick count for every legal play at the given position.
+
+    JSON body:
+        hands (str): PBN remaining cards (without "N:" prefix)
+        trump (int): 0=S, 1=H, 2=D, 3=C, 4=NT
+        first (int): 0=N, 1=E, 2=S, 3=W (who plays next)
+        current_trick (list): cards already played in current trick, e.g. ["S2", "HA"]
+                              Each card is suit letter + rank: S/H/D/C + 2-9/T/J/Q/K/A
+
+    Returns:
+        JSON with cards: [{suit, rank, tricks}, ...]
+        tricks = number of tricks declarer's side can take with optimal play
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "JSON body required"}), 400
+
+        hands = data.get("hands")
+        trump = data.get("trump")
+        first = data.get("first")
+        current_trick = data.get("current_trick", [])
+
+        if hands is None or trump is None or first is None:
+            return jsonify({"error": "hands, trump, and first are required"}), 400
+
+        if dds._fallback:
+            from ddsolver import dds as dds_lib
+        else:
+            from ddsolver import ddss as dds_lib
+
+        # Build dealPBN struct
+        dl = dds_lib.dealPBN()
+        dl.trump = trump
+        dl.first = first
+
+        # Parse current trick cards into suit/rank arrays
+        rank_map = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
+                    '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
+        suit_map = {'S': 0, 'H': 1, 'D': 2, 'C': 3}
+
+        for i in range(3):
+            if i < len(current_trick):
+                card_str = current_trick[i]
+                dl.currentTrickSuit[i] = suit_map.get(card_str[0], 0)
+                dl.currentTrickRank[i] = rank_map.get(card_str[1:], 0)
+            else:
+                dl.currentTrickSuit[i] = 0
+                dl.currentTrickRank[i] = 0
+
+        dl.remainCards = ("N:" + hands).encode('utf-8')
+
+        # Solve: target=-1 (max tricks), solutions=2 (all legal plays), mode=0
+        fut = dds_lib.futureTricks()
+        res = dds_lib.SolveBoardPBN(dl, -1, 2, 0, ctypes.pointer(fut), 0)
+        if res != 1:
+            error_message = dds_lib.get_error_message(res)
+            return jsonify({"error": f"DDS error: {error_message}"}), 500
+
+        # Extract results
+        suit_letters = ['S', 'H', 'D', 'C']
+        rank_letters = {2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8',
+                        9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
+
+        cards = []
+        for i in range(fut.cards):
+            cards.append({
+                "suit": suit_letters[fut.suit[i]],
+                "rank": rank_letters.get(fut.rank[i], str(fut.rank[i])),
+                "tricks": fut.score[i],
+                "equals": fut.equals[i]
+            })
+
+        return jsonify({"cards": cards})
+
+    except Exception as e:
+        handle_exception(e)
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route('/robots.txt')
 def robots_txt():
     content = "User-agent: *\nDisallow: /"
