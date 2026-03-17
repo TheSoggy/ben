@@ -2205,6 +2205,81 @@ def autoplay():
         error_message = "An error occurred: {}".format(str(e))
         return jsonify({"error": error_message}), 400
 
+@app.route('/double_dummy')
+def double_dummy():
+    """
+    Calculate double-dummy tricks and par score for a deal.
+
+    Parameters:
+        hands (str): PBN deal string (without "N:" prefix)
+                     e.g. "862.62.AQT52.A96 AQJT9.Q875.97.K7 7543.AT943.8.JT8 K.KJ.KJ643.Q5432"
+        vul (str): Vulnerability - None/NS/EW/Both (default: None)
+
+    Returns:
+        JSON with dd_table (tricks per declarer/strain) and par_score (NS par)
+    """
+    try:
+        hands = request.args.get("hands")
+        if not hands:
+            return jsonify({"error": "hands parameter is required"}), 400
+
+        v = request.args.get("vul", "None")
+        vuln = parse_vuln(v)
+
+        # Use the DDS library directly via ctypes
+        # Import the appropriate module based on what DDSSolver uses
+        if dds._fallback:
+            from ddsolver import dds as dds_lib
+        else:
+            from ddsolver import ddss as dds_lib
+
+        tableDealPBN = dds_lib.ddTableDealPBN()
+        table = dds_lib.ddTableResults()
+        myTable = ctypes.pointer(table)
+        tableDealPBN.cards = ("N:" + hands).encode('utf-8')
+
+        res = dds_lib.CalcDDtablePBN(tableDealPBN, myTable)
+        if res != 1:
+            error_message = dds_lib.get_error_message(res)
+            return jsonify({"error": f"DDS error: {error_message}"}), 500
+
+        # Extract DD table: resTable[strain][hand] = tricks
+        strain_names = ["spades", "hearts", "diamonds", "clubs", "notrump"]
+        hand_names = ["north", "east", "south", "west"]
+        dd_table = {}
+        for h_i, h_name in enumerate(hand_names):
+            dd_table[h_name] = {}
+            for s_i, s_name in enumerate(strain_names):
+                dd_table[h_name][s_name] = table.resTable[s_i][h_i]
+
+        # Calculate par score
+        v_int = 0
+        if vuln[0]: v_int = 2
+        if vuln[1]: v_int = 3
+        if vuln[0] and vuln[1]: v_int = 1
+
+        pres = dds_lib.parResults()
+        par_res = dds_lib.Par(myTable, pres, v_int)
+        par_score = None
+        par_contract = None
+        if par_res == 1:
+            par_str = pres.parScore[0].value.decode('utf-8')
+            par_score = int(par_str.split()[1])
+            par_contract = pres.parContractsString[0].value.decode('utf-8').strip()
+
+        result = {
+            "dd_table": dd_table,
+            "par_score": par_score,
+            "par_contract": par_contract
+        }
+
+        return jsonify(result)
+
+    except Exception as e:
+        handle_exception(e)
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route('/robots.txt')
 def robots_txt():
     content = "User-agent: *\nDisallow: /"
