@@ -6,6 +6,7 @@ import gc
 import os
 import sys
 import platform
+import ctypes
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = 'T'
 # Just disables the warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -2336,9 +2337,9 @@ def solve_board():
 
         dl.remainCards = ("N:" + hands).encode('utf-8')
 
-        # Solve: target=-1 (max tricks), solutions=2 (all legal plays), mode=0
+        # Solve: target=-1 (max tricks), solutions=3 (all legal plays), mode=0
         fut = dds_lib.futureTricks()
-        res = dds_lib.SolveBoardPBN(dl, -1, 2, 0, ctypes.pointer(fut), 0)
+        res = dds_lib.SolveBoardPBN(dl, -1, 3, 0, ctypes.pointer(fut), 0)
         if res != 1:
             error_message = dds_lib.get_error_message(res)
             return jsonify({"error": f"DDS error: {error_message}"}), 500
