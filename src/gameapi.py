@@ -2337,24 +2337,39 @@ def solve_board():
 
         dl.remainCards = ("N:" + hands).encode('utf-8')
 
-        # Solve: target=-1 (max tricks), solutions=3 (all legal plays), mode=0
+        # Solve: target=-1 (max tricks), solutions=3 (all legal plays), mode=1
+        # mode=1 computes scores for forced plays (mode=0 returns -2).
+        # For non-forced plays: score[i] = tricks for first's side.
+        # For forced plays: score[i] = tricks for the next player's side.
+        # We normalize forced play scores to first's side for consistency.
         fut = dds_lib.futureTricks()
-        res = dds_lib.SolveBoardPBN(dl, -1, 3, 0, ctypes.pointer(fut), 0)
+        res = dds_lib.SolveBoardPBN(dl, -1, 3, 1, ctypes.pointer(fut), 0)
         if res != 1:
             error_message = dds_lib.get_error_message(res)
             return jsonify({"error": f"DDS error: {error_message}"}), 500
 
-        # Extract results
+        # mode=1 returns scores from the next player's perspective.
+        # Flip to first's side when they're on opposite sides.
+        n_in_trick = sum(1 for j in range(3) if dl.currentTrickRank[j] != 0)
+        next_player = (first + n_in_trick) % 4
+        needs_flip = (next_player % 2) != (first % 2)
+
+        # Extract results — score always normalized to first's side
         suit_letters = ['S', 'H', 'D', 'C']
         rank_letters = {2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8',
                         9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
 
         cards = []
         for i in range(fut.cards):
+            score = fut.score[i]
+            if needs_flip:
+                total_cards = sum(len(h.replace('.', '')) for h in hands.split(' '))
+                remaining_tricks = (total_cards + n_in_trick) // 4
+                score = remaining_tricks - score
             cards.append({
                 "suit": suit_letters[fut.suit[i]],
                 "rank": rank_letters.get(fut.rank[i], str(fut.rank[i])),
-                "tricks": fut.score[i],
+                "tricks": score,
                 "equals": fut.equals[i]
             })
 
