@@ -2415,7 +2415,9 @@ def solve_board():
                     dl2.currentTrickRank[j] = 0
 
             fut2 = dds_lib.futureTricks()
-            res2 = dds_lib.SolveBoardPBN(dl2, -1, 3, 1, ctypes.pointer(fut2), 0)
+            # Use solutions=1 to get only the optimal result (max tricks)
+            # since the next position may have multiple cards with different scores
+            res2 = dds_lib.SolveBoardPBN(dl2, -1, 1, 1, ctypes.pointer(fut2), 0)
             if res2 == 1 and fut2.cards > 0:
                 # The next solve returns tricks for the player AFTER forced.
                 # That player is on the same side as forced if n_in_trick is odd,
