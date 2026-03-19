@@ -2348,29 +2348,119 @@ def solve_board():
             error_message = dds_lib.get_error_message(res)
             return jsonify({"error": f"DDS error: {error_message}"}), 500
 
-        # mode=1 returns scores from the next player's perspective.
-        # Flip to first's side when they're on opposite sides.
+        # DDS returns score[i] = tricks for the side of the NEXT player to play
+        # (the player whose legal cards are being evaluated).
+        # The caller (Elixir) knows who the next player is and handles conversion.
         n_in_trick = sum(1 for j in range(3) if dl.currentTrickRank[j] != 0)
-        next_player = (first + n_in_trick) % 4
-        needs_flip = (next_player % 2) != (first % 2)
+        next_player_pos = (first + n_in_trick) % 4
 
-        # Extract results — score always normalized to first's side
+        # Handle DDS -2 for forced plays: advance position and re-query
         suit_letters = ['S', 'H', 'D', 'C']
         rank_letters = {2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8',
                         9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
+        rank_chars = {v: k for k, v in rank_letters.items()}
 
+        has_forced = fut.cards == 1 and fut.score[0] == -2
+        if has_forced:
+            forced_suit = fut.suit[0]
+            forced_rank = fut.rank[0]
+            forced_card_char = rank_letters.get(forced_rank, '')
+
+            # Remove the forced card from the PBN hands
+            pbn_str = dl.remainCards.decode('utf-8')
+            prefix = pbn_str[:2]  # "N:"
+            hands_parts = pbn_str[2:].split(' ')
+            # Next player is at position (first + n_in_trick) % 4
+            # PBN order: N=0, E=1, S=2, W=3
+            forced_player_idx = next_player_pos
+            player_suits = hands_parts[forced_player_idx].split('.')
+            player_suits[forced_suit] = player_suits[forced_suit].replace(
+                forced_card_char, '', 1)
+            hands_parts[forced_player_idx] = '.'.join(player_suits)
+            new_pbn = prefix + ' '.join(hands_parts)
+
+            # Build new deal with the forced card played
+            dl2 = dds_lib.dealPBN()
+            dl2.trump = trump
+            dl2.remainCards = new_pbn.encode('utf-8')
+
+            if n_in_trick < 2:
+                # Add forced card to current trick (not completing it)
+                dl2.first = first
+                for j in range(3):
+                    dl2.currentTrickSuit[j] = dl.currentTrickSuit[j]
+                    dl2.currentTrickRank[j] = dl.currentTrickRank[j]
+                dl2.currentTrickSuit[n_in_trick] = forced_suit
+                dl2.currentTrickRank[n_in_trick] = forced_rank
+            elif n_in_trick == 2:
+                # This is the 3rd card; adding forced makes 4 = trick complete.
+                # We can't determine the winner here easily, so just query
+                # with no current trick and let DDS figure it out.
+                # The next-next player after forced is (first + 4) % 4 = first
+                # but the actual winner depends on cards played.
+                # Simpler: add as 3rd card in trick (DDS handles 3-card tricks)
+                dl2.first = first
+                for j in range(3):
+                    dl2.currentTrickSuit[j] = dl.currentTrickSuit[j]
+                    dl2.currentTrickRank[j] = dl.currentTrickRank[j]
+                dl2.currentTrickSuit[n_in_trick] = forced_suit
+                dl2.currentTrickRank[n_in_trick] = forced_rank
+            else:
+                # n_in_trick == 3: forced card is 4th, trick completes
+                # Start a new trick. We don't know the winner, so use first
+                # as placeholder — DDS will figure it out from the next solve.
+                dl2.first = (first + 4) % 4
+                for j in range(3):
+                    dl2.currentTrickSuit[j] = 0
+                    dl2.currentTrickRank[j] = 0
+
+            fut2 = dds_lib.futureTricks()
+            res2 = dds_lib.SolveBoardPBN(dl2, -1, 3, 1, ctypes.pointer(fut2), 0)
+            if res2 == 1 and fut2.cards > 0:
+                # The next solve returns tricks for the player AFTER forced.
+                # That player is on the same side as forced if n_in_trick is odd,
+                # opposite side if n_in_trick is even.
+                # We want tricks for the forced player's (next_player's) side.
+                after_forced_pos = (next_player_pos + 1) % 4
+                same_side = (after_forced_pos % 2) == (next_player_pos % 2)
+                next_score = fut2.score[0]
+
+                # Count remaining tricks after forced card played
+                total_cards_after = sum(
+                    len(s) for s in hands_parts[forced_player_idx].split('.')
+                )
+                # All hands minus forced card
+                all_remaining = sum(
+                    len(h.replace('.', '')) for h in hands_parts
+                )
+                n_in_trick_after = sum(
+                    1 for j in range(3) if dl2.currentTrickRank[j] != 0
+                )
+                remaining_tricks = (all_remaining + n_in_trick_after) // 4
+
+                if same_side:
+                    forced_tricks = next_score
+                else:
+                    forced_tricks = remaining_tricks - next_score
+            else:
+                forced_tricks = -2  # fallback: still -2
+
+            forced_score = forced_tricks
+        else:
+            forced_score = None
+
+        # Extract results — score is from next player's side perspective
         cards = []
         for i in range(fut.cards):
             score = fut.score[i]
-            if needs_flip:
-                total_cards = sum(len(h.replace('.', '')) for h in hands.split(' '))
-                remaining_tricks = (total_cards + n_in_trick) // 4
-                score = remaining_tricks - score
+            if score == -2 and forced_score is not None:
+                score = forced_score
             cards.append({
                 "suit": suit_letters[fut.suit[i]],
                 "rank": rank_letters.get(fut.rank[i], str(fut.rank[i])),
                 "tricks": score,
-                "equals": fut.equals[i]
+                "equals": fut.equals[i],
+                "next_player": next_player_pos
             })
 
         return jsonify({"cards": cards})
