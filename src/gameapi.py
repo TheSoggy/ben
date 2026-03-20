@@ -2354,102 +2354,99 @@ def solve_board():
         n_in_trick = sum(1 for j in range(3) if dl.currentTrickRank[j] != 0)
         next_player_pos = (first + n_in_trick) % 4
 
-        # Handle DDS -2 for forced plays: advance position and re-query
+        # Handle DDS -2 for forced plays: advance position and re-query in a loop.
+        # DDS returns -2 when a player has only 1 legal card (forced play).
+        # We play the forced card, advance the position, and re-query until
+        # we reach a position with multiple legal plays or the hand ends.
         suit_letters = ['S', 'H', 'D', 'C']
         rank_letters = {2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8',
                         9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
-        rank_chars = {v: k for k, v in rank_letters.items()}
 
-        has_forced = fut.cards == 1 and fut.score[0] == -2
-        if has_forced:
-            forced_suit = fut.suit[0]
-            forced_rank = fut.rank[0]
-            forced_card_char = rank_letters.get(forced_rank, '')
+        forced_score = None
+        if fut.cards == 1 and fut.score[0] == -2:
+            # Loop to resolve cascading forced plays
+            cur_dl = dl
+            cur_fut = fut
+            cur_first = first
+            cur_n_in_trick = n_in_trick
+            cur_pbn = dl.remainCards.decode('utf-8')
+            cur_next_pos = next_player_pos
 
-            # Remove the forced card from the PBN hands
-            pbn_str = dl.remainCards.decode('utf-8')
-            prefix = pbn_str[:2]  # "N:"
-            hands_parts = pbn_str[2:].split(' ')
-            # Next player is at position (first + n_in_trick) % 4
-            # PBN order: N=0, E=1, S=2, W=3
-            forced_player_idx = next_player_pos
-            player_suits = hands_parts[forced_player_idx].split('.')
-            player_suits[forced_suit] = player_suits[forced_suit].replace(
-                forced_card_char, '', 1)
-            hands_parts[forced_player_idx] = '.'.join(player_suits)
-            new_pbn = prefix + ' '.join(hands_parts)
+            for _ in range(13):  # max 13 cards in a hand
+                if cur_fut.cards != 1 or cur_fut.score[0] != -2:
+                    break
 
-            # Build new deal with the forced card played
-            dl2 = dds_lib.dealPBN()
-            dl2.trump = trump
-            dl2.remainCards = new_pbn.encode('utf-8')
+                f_suit = cur_fut.suit[0]
+                f_rank = cur_fut.rank[0]
+                f_char = rank_letters.get(f_rank, '')
 
-            if n_in_trick < 2:
-                # Add forced card to current trick (not completing it)
-                dl2.first = first
-                for j in range(3):
-                    dl2.currentTrickSuit[j] = dl.currentTrickSuit[j]
-                    dl2.currentTrickRank[j] = dl.currentTrickRank[j]
-                dl2.currentTrickSuit[n_in_trick] = forced_suit
-                dl2.currentTrickRank[n_in_trick] = forced_rank
-            elif n_in_trick == 2:
-                # This is the 3rd card; adding forced makes 4 = trick complete.
-                # We can't determine the winner here easily, so just query
-                # with no current trick and let DDS figure it out.
-                # The next-next player after forced is (first + 4) % 4 = first
-                # but the actual winner depends on cards played.
-                # Simpler: add as 3rd card in trick (DDS handles 3-card tricks)
-                dl2.first = first
-                for j in range(3):
-                    dl2.currentTrickSuit[j] = dl.currentTrickSuit[j]
-                    dl2.currentTrickRank[j] = dl.currentTrickRank[j]
-                dl2.currentTrickSuit[n_in_trick] = forced_suit
-                dl2.currentTrickRank[n_in_trick] = forced_rank
-            else:
-                # n_in_trick == 3: forced card is 4th, trick completes
-                # Start a new trick. We don't know the winner, so use first
-                # as placeholder — DDS will figure it out from the next solve.
-                dl2.first = (first + 4) % 4
-                for j in range(3):
-                    dl2.currentTrickSuit[j] = 0
-                    dl2.currentTrickRank[j] = 0
+                # Remove forced card from PBN hands
+                prefix = cur_pbn[:2]  # "N:"
+                parts = cur_pbn[2:].split(' ')
+                p_suits = parts[cur_next_pos].split('.')
+                p_suits[f_suit] = p_suits[f_suit].replace(f_char, '', 1)
+                parts[cur_next_pos] = '.'.join(p_suits)
+                new_pbn = prefix + ' '.join(parts)
 
-            fut2 = dds_lib.futureTricks()
-            # Use solutions=1 to get only the optimal result (max tricks)
-            # since the next position may have multiple cards with different scores
-            res2 = dds_lib.SolveBoardPBN(dl2, -1, 1, 1, ctypes.pointer(fut2), 0)
-            if res2 == 1 and fut2.cards > 0:
-                # The next solve returns tricks for the player AFTER forced.
-                # That player is on the same side as forced if n_in_trick is odd,
-                # opposite side if n_in_trick is even.
-                # We want tricks for the forced player's (next_player's) side.
-                after_forced_pos = (next_player_pos + 1) % 4
-                same_side = (after_forced_pos % 2) == (next_player_pos % 2)
-                next_score = fut2.score[0]
+                # Build new deal with forced card played
+                dl2 = dds_lib.dealPBN()
+                dl2.trump = trump
+                dl2.remainCards = new_pbn.encode('utf-8')
 
-                # Count remaining tricks after forced card played
-                total_cards_after = sum(
-                    len(s) for s in hands_parts[forced_player_idx].split('.')
-                )
-                # All hands minus forced card
-                all_remaining = sum(
-                    len(h.replace('.', '')) for h in hands_parts
-                )
-                n_in_trick_after = sum(
-                    1 for j in range(3) if dl2.currentTrickRank[j] != 0
-                )
-                remaining_tricks = (all_remaining + n_in_trick_after) // 4
-
-                if same_side:
-                    forced_tricks = next_score
+                if cur_n_in_trick < 3:
+                    # Add forced card to current trick (doesn't complete it)
+                    dl2.first = cur_first
+                    for j in range(3):
+                        dl2.currentTrickSuit[j] = cur_dl.currentTrickSuit[j]
+                        dl2.currentTrickRank[j] = cur_dl.currentTrickRank[j]
+                    dl2.currentTrickSuit[cur_n_in_trick] = f_suit
+                    dl2.currentTrickRank[cur_n_in_trick] = f_rank
+                    new_n_in_trick = cur_n_in_trick + 1
                 else:
-                    forced_tricks = remaining_tricks - next_score
-            else:
-                forced_tricks = -2  # fallback: still -2
+                    # n_in_trick == 3: forced card is 4th, trick completes.
+                    # Determine the trick winner using deck52.get_trick_winner_i.
+                    # Convert DDS suit/rank to card52: suit*13 + (14-rank)
+                    trick52 = [
+                        cur_dl.currentTrickSuit[0] * 13 + (14 - cur_dl.currentTrickRank[0]),
+                        cur_dl.currentTrickSuit[1] * 13 + (14 - cur_dl.currentTrickRank[1]),
+                        cur_dl.currentTrickSuit[2] * 13 + (14 - cur_dl.currentTrickRank[2]),
+                        f_suit * 13 + (14 - f_rank),
+                    ]
+                    winner_offset = deck52.get_trick_winner_i(trick52, trump)
+                    dl2.first = (cur_first + winner_offset) % 4
+                    for j in range(3):
+                        dl2.currentTrickSuit[j] = 0
+                        dl2.currentTrickRank[j] = 0
+                    new_n_in_trick = 0
 
-            forced_score = forced_tricks
-        else:
-            forced_score = None
+                # Re-query with solutions=1
+                fut2 = dds_lib.futureTricks()
+                res2 = dds_lib.SolveBoardPBN(dl2, -1, 1, 1, ctypes.pointer(fut2), 0)
+                if res2 != 1 or fut2.cards == 0:
+                    break  # DDS error, fall back to -2
+
+                if fut2.score[0] != -2:
+                    # Resolved! Convert back to original next player's perspective.
+                    # fut2 returns tricks for the resolved next player's side.
+                    resolved_next = (dl2.first + new_n_in_trick) % 4
+                    resolved_score = fut2.score[0]
+
+                    all_remaining = sum(len(h.replace('.', '')) for h in parts)
+                    rem_tricks = (all_remaining + new_n_in_trick) // 4
+
+                    if (resolved_next % 2) == (next_player_pos % 2):
+                        forced_score = resolved_score
+                    else:
+                        forced_score = rem_tricks - resolved_score
+                    break
+
+                # Still -2: advance to next forced play
+                cur_dl = dl2
+                cur_fut = fut2
+                cur_first = dl2.first
+                cur_n_in_trick = new_n_in_trick
+                cur_pbn = new_pbn
+                cur_next_pos = (cur_first + cur_n_in_trick) % 4
 
         # Extract results — score is from next player's side perspective
         cards = []
