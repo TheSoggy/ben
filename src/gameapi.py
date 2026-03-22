@@ -1560,6 +1560,86 @@ def extract_from_pbn(cards, strain_i):
             cards.append(deck52.decode_card(card))
     return cards # HTTP status code 500 for internal server error
 
+@app.route('/double_dummy')
+def double_dummy():
+    """
+    Calculate the full DD table and par score for a deal.
+
+    Parameters:
+        hands (str): PBN deal string (4 hands space-separated, no "N:" prefix)
+                     e.g. "AK97.K.T3.AK732 QJ8.A95.K63.T42 T654.QJT8.J9.Q85 32.76432.AQ8754.6"
+        vul (str): Vulnerability: None/NS/EW/Both/All (default: None)
+
+    Returns:
+        JSON with dd_table (tricks per declarer/strain), par_score (NS), par_contract
+    """
+    try:
+        hands_str = request.args.get("hands")
+        if not hands_str:
+            return jsonify({"error": "Missing 'hands' parameter"}), 400
+
+        hands_str = hands_str.replace('_', '.')
+        v = request.args.get("vul", "")
+        vuln = parse_vuln(v)
+
+        # Use the DDS library (ddss or fallback dds)
+        if dds._fallback:
+            from ddsolver import dds as dds_lib
+        else:
+            from ddsolver import ddss as dds_lib
+
+        tableDealPBN = dds_lib.ddTableDealPBN()
+        table = dds_lib.ddTableResults()
+        myTable = ctypes.pointer(table)
+        tableDealPBN.cards = ("N:" + hands_str).encode('utf-8')
+
+        res = dds_lib.CalcDDtablePBN(tableDealPBN, myTable)
+        if res != 1:
+            error_message = dds_lib.get_error_message(res)
+            return jsonify({"error": f"DDS CalcDDtablePBN error {res}: {error_message}"}), 400
+
+        # Extract DD table from DDS resTable.
+        # C struct: int resTable[DDS_STRAINS=5][DDS_HANDS=4] → resTable[strain][hand]
+        # But ctypes defines (c_int * 5) * 4 → a [4][5] array with stride 5,
+        # so resTable[i][j] in Python uses the wrong stride vs C's stride of 4.
+        # Read the flat memory directly with the correct C stride.
+        strain_names = ["spades", "hearts", "diamonds", "clubs", "notrump"]
+        position_names = ["north", "east", "south", "west"]
+
+        flat = ctypes.cast(ctypes.pointer(table.resTable), ctypes.POINTER(ctypes.c_int))
+        dd_table = {}
+        for di, pos in enumerate(position_names):
+            dd_table[pos] = {}
+            for si, strain in enumerate(strain_names):
+                # C layout: resTable[strain][hand] at flat offset strain * 4 + hand
+                dd_table[pos][strain] = flat[si * 4 + di]
+
+        # Calculate par
+        pres = dds_lib.parResults()
+        v_code = 0
+        if vuln[0]: v_code = 2
+        if vuln[1]: v_code = 3
+        if vuln[0] and vuln[1]: v_code = 1
+
+        par_score = 0
+        par_contract = ""
+        par_res = dds_lib.Par(myTable, pres, v_code)
+        if par_res == 1:
+            par_str = pres.parScore[0].value.decode('utf-8')
+            par_score = int(par_str.split()[1])
+            par_contract = pres.parContractsString[0].value.decode('utf-8').strip()
+
+        return jsonify({
+            "dd_table": dd_table,
+            "par_score": par_score,
+            "par_contract": par_contract
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 400
+
 # Optional: Custom error handler for rate limit exceeded (HTTP 429)
 @app.errorhandler(429)
 def ratelimit_handler(e):
@@ -2205,81 +2285,6 @@ def autoplay():
         handle_exception(e)
         error_message = "An error occurred: {}".format(str(e))
         return jsonify({"error": error_message}), 400
-
-@app.route('/double_dummy')
-def double_dummy():
-    """
-    Calculate double-dummy tricks and par score for a deal.
-
-    Parameters:
-        hands (str): PBN deal string (without "N:" prefix)
-                     e.g. "862.62.AQT52.A96 AQJT9.Q875.97.K7 7543.AT943.8.JT8 K.KJ.KJ643.Q5432"
-        vul (str): Vulnerability - None/NS/EW/Both (default: None)
-
-    Returns:
-        JSON with dd_table (tricks per declarer/strain) and par_score (NS par)
-    """
-    try:
-        hands = request.args.get("hands")
-        if not hands:
-            return jsonify({"error": "hands parameter is required"}), 400
-
-        v = request.args.get("vul", "None")
-        vuln = parse_vuln(v)
-
-        # Use the DDS library directly via ctypes
-        # Import the appropriate module based on what DDSSolver uses
-        if dds._fallback:
-            from ddsolver import dds as dds_lib
-        else:
-            from ddsolver import ddss as dds_lib
-
-        tableDealPBN = dds_lib.ddTableDealPBN()
-        table = dds_lib.ddTableResults()
-        myTable = ctypes.pointer(table)
-        tableDealPBN.cards = ("N:" + hands).encode('utf-8')
-
-        res = dds_lib.CalcDDtablePBN(tableDealPBN, myTable)
-        if res != 1:
-            error_message = dds_lib.get_error_message(res)
-            return jsonify({"error": f"DDS error: {error_message}"}), 500
-
-        # Extract DD table: resTable[strain][hand] = tricks
-        strain_names = ["spades", "hearts", "diamonds", "clubs", "notrump"]
-        hand_names = ["north", "east", "south", "west"]
-        dd_table = {}
-        for h_i, h_name in enumerate(hand_names):
-            dd_table[h_name] = {}
-            for s_i, s_name in enumerate(strain_names):
-                dd_table[h_name][s_name] = table.resTable[s_i][h_i]
-
-        # Calculate par score
-        v_int = 0
-        if vuln[0]: v_int = 2
-        if vuln[1]: v_int = 3
-        if vuln[0] and vuln[1]: v_int = 1
-
-        pres = dds_lib.parResults()
-        par_res = dds_lib.Par(myTable, pres, v_int)
-        par_score = None
-        par_contract = None
-        if par_res == 1:
-            par_str = pres.parScore[0].value.decode('utf-8')
-            par_score = int(par_str.split()[1])
-            par_contract = pres.parContractsString[0].value.decode('utf-8').strip()
-
-        result = {
-            "dd_table": dd_table,
-            "par_score": par_score,
-            "par_contract": par_contract
-        }
-
-        return jsonify(result)
-
-    except Exception as e:
-        handle_exception(e)
-        return jsonify({"error": str(e)}), 400
-
 
 @app.route('/solve_board', methods=['POST'])
 def solve_board():
