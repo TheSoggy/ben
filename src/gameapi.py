@@ -714,7 +714,8 @@ def is_internal_request():
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,  # Limits based on the remote IP address
-    default_limits=["20000 per day", "5000 per hour", "100 per minute"]
+    default_limits=["20000 per day", "5000 per hour", "100 per minute"],
+    enabled=not nolimit
     # storage_uri="memory://" # Default, suitable for single-process test server.
                                # For production with multiple workers, use Redis or Memcached:
                                # "redis://localhost:6379"
