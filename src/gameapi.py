@@ -533,8 +533,12 @@ parser.add_argument("--matchpoint", type=str_to_bool, default=None, help="Playin
 parser.add_argument("--nolimit", type=str_to_bool, default=str_to_bool(os.environ.get("BEN_NOLIMIT", "False")), help="Removed limit on number of requests to the API")
 parser.add_argument("--allowed-hosts", type=str, default=None, help="Comma-separated list of allowed Host header values (e.g. 'localhost,ben,myhost.example.com'). Default: localhost,127.0.0.1. Use '*' to allow all hosts.")
 
-# Use parse_known_args so gunicorn's CLI args don't cause errors
-args, _ = parser.parse_known_args()
+# When running under gunicorn, sys.argv contains gunicorn's args (including --config
+# which collides with our --config flag). Use env vars exclusively in that case.
+if 'gunicorn' in sys.argv[0]:
+    args = parser.parse_args([])  # Parse with no args, use env var defaults
+else:
+    args, _ = parser.parse_known_args()
 
 configfile = args.config
 opponentfile = args.opponent
