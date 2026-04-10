@@ -13,7 +13,7 @@ import os
 bind = f"0.0.0.0:{os.environ.get('BEN_PORT', '8085')}"
 
 # --- Worker processes ---
-workers = int(os.environ.get("BEN_WORKERS", "2"))
+workers = int(os.environ.get("BEN_WORKERS", "4"))
 worker_class = "gevent"
 worker_connections = 100
 

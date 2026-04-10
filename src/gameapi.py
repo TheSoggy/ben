@@ -637,7 +637,11 @@ if models.use_bba or models.use_bba_to_count_aces or models.consult_bba or model
         bot = BBABotBid(None, None, None, None, None, None, None, None)
         print(f"BBA enabled. Version {bot.version()}")
     except Exception as e:
-        print(f"BBA enabled (version check failed: {e})")
+        print(f"BBA init failed ({e}), disabling BBA — falling back to neural network bidding")
+        models.use_bba = False
+        models.use_bba_to_count_aces = False
+        models.consult_bba = False
+        models.use_bba_rollout = False
 
 if models.use_suitc:
     try:
