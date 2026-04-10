@@ -21,6 +21,7 @@ pythonnet>=3.0.4
 bottle_session
 flask
 flask_cors
-flask_limiter 
+flask_limiter
+gunicorn[gevent]
 psutil==5.9.0
 colorama

@@ -522,18 +522,19 @@ board_no.append(0)
 config_path = get_execution_path()
     
 parser = argparse.ArgumentParser(description="Game API")
-parser.add_argument("--host", default="localhost", help="Hostname for appserver")
-parser.add_argument("--config", default=f"{config_path}/config/default_api.conf", help="Filename for configuration")
+parser.add_argument("--host", default=os.environ.get("BEN_HOST", "localhost"), help="Hostname for appserver")
+parser.add_argument("--config", default=os.environ.get("BEN_CONFIG", f"{config_path}/config/default_api.conf"), help="Filename for configuration")
 parser.add_argument("--opponent", default="", help="Filename for configuration pf opponents")
 parser.add_argument("--verbose", type=str_to_bool, default=False, help="Output samples and other information during play")
-parser.add_argument("--port", type=int, default=8085, help="Port for appserver")
+parser.add_argument("--port", type=int, default=int(os.environ.get("BEN_PORT", "8085")), help="Port for appserver")
 parser.add_argument("--record", type=str_to_bool, default=True, help="Recording of responses")
 parser.add_argument("--seed", type=int, default=42, help="Seed for random")
 parser.add_argument("--matchpoint", type=str_to_bool, default=None, help="Playing match point")
-parser.add_argument("--nolimit", type=str_to_bool, default=False, help="Removed limit on number of requests to the API")
+parser.add_argument("--nolimit", type=str_to_bool, default=str_to_bool(os.environ.get("BEN_NOLIMIT", "False")), help="Removed limit on number of requests to the API")
 parser.add_argument("--allowed-hosts", type=str, default=None, help="Comma-separated list of allowed Host header values (e.g. 'localhost,ben,myhost.example.com'). Default: localhost,127.0.0.1. Use '*' to allow all hosts.")
 
-args = parser.parse_args()
+# Use parse_known_args so gunicorn's CLI args don't cause errors
+args, _ = parser.parse_known_args()
 
 configfile = args.config
 opponentfile = args.opponent

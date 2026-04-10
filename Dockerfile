@@ -31,6 +31,13 @@ RUN python3.12 -m pip install --break-system-packages --no-cache-dir -r requirem
 ENV TF_CPP_MIN_LOG_LEVEL=2
 ENV CUDA_VISIBLE_DEVICES=""
 
+# Ben configuration via env vars (used by gunicorn.conf.py and gameapi.py argparse defaults)
+ENV BEN_HOST=0.0.0.0
+ENV BEN_PORT=8085
+ENV BEN_CONFIG=config/bridgearena_api.conf
+ENV BEN_WORKERS=16
+ENV BEN_NOLIMIT=True
+
 # Copy application code
 COPY src/frontend /app/frontend/
 COPY src/*.py /app/
@@ -57,4 +64,4 @@ EXPOSE 8085
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -f http://localhost:8085/ || exit 1
 
-CMD ["python3.12", "gameapi.py", "--host", "0.0.0.0", "--port", "8085", "--config", "config/bridgearena_api.conf"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "gameapi:app"]
