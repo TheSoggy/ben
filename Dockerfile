@@ -1,15 +1,12 @@
 # Ben AI Bridge Engine
-# Multi-stage build: compile native extensions in builder, slim final image
-# Layer order optimized for cache hits: system → models (rare) → code (frequent)
+# Python 3.12 + TensorFlow + .NET 10 runtime
+# Layer order optimized for cache hits: system → pip → models (rare) → code (frequent)
+FROM docker.io/ubuntu:24.04
 
-# =============================================================================
-# Stage 1: Builder — install system deps + compile Python packages
-# =============================================================================
-FROM docker.io/ubuntu:24.04 AS builder
-
+# Install system deps: Python 3.12, libdds, build tools
 RUN apt-get update && \
     apt-get -y install --no-install-recommends \
-      python3.12 python3.12-venv python3.12-dev python3-pip \
+      python3.12 python3.12-venv python3-pip python3.12-dev \
       gcc g++ build-essential \
       libboost-thread-dev libdds-dev \
       libicu-dev \
@@ -22,41 +19,16 @@ RUN apt-get update && \
 RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin \
       --channel 10.0 --runtime dotnet --install-dir /usr/share/dotnet && \
     ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
-
-WORKDIR /app
-
-# Install Python deps — cached unless requirements.txt changes
-COPY requirements.txt .
-RUN python3.12 -m pip install --break-system-packages --no-cache-dir -r requirements.txt
-
-# =============================================================================
-# Stage 2: Runtime — slim image without build tools
-# =============================================================================
-FROM docker.io/ubuntu:24.04
-
-# Runtime-only system packages (no gcc/g++/build-essential)
-RUN apt-get update && \
-    apt-get -y install --no-install-recommends \
-      python3.12 python3.12-venv \
-      libboost-thread1.83.0 libdds \
-      libicu74 \
-      curl ca-certificates && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
-    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Copy .NET runtime from builder
-COPY --from=builder /usr/share/dotnet /usr/share/dotnet
-RUN ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PYTHONNET_RUNTIME=coreclr
 
-# Copy installed Python packages from builder
-COPY --from=builder /usr/lib/python3/dist-packages /usr/lib/python3/dist-packages
-COPY --from=builder /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
 WORKDIR /app
+
+# Install Python dependencies — cached unless requirements.txt changes
+COPY requirements.txt .
+RUN python3.12 -m pip install --break-system-packages --no-cache-dir -r requirements.txt && \
+    apt-get purge -y --auto-remove gcc g++ build-essential python3.12-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # Suppress TensorFlow/CUDA warnings (no GPU in container)
 ENV TF_CPP_MIN_LOG_LEVEL=2
@@ -93,6 +65,7 @@ COPY src/suitc /app/suitc/
 COPY src/openinglead /app/openinglead/
 
 # BBA imports "from src.objects" expecting repo-root/src/ layout
+# Create /src symlink so the import resolves to /app/objects.py
 RUN ln -s /app /src
 
 EXPOSE 8085
