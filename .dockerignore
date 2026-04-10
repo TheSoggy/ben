@@ -1,17 +1,43 @@
+# VCS & IDE
 .git
-.DS_Store
-.ipynb_checkpoints
-__pycache__
-src/gamedb.*
+.github
+.gitignore
 .vscode
+.DS_Store
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+.venv
+.ipynb_checkpoints
+
+# Documentation & images (not needed at runtime)
+*.md
+*.MD
+*.jpg
+*.png
+*.webp
+LICENSE
+convention_card.md
+
+# Development/training files
 install/
 scripts/
 training/
-models/eamon
-src/db
 demo/
-# models/ - included for Docker build
+Boards/
+Challenges/
+logs/
+conda_setup.sh
+
+# Database files
+src/gamedb.*
 src/Eastdb.*
 src/Westdb.*
 src/Northdb.*
 src/Southdb.*
+src/db
+
+# Unused model variants
+models/eamon
