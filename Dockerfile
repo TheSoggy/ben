@@ -65,8 +65,14 @@ COPY src/suitc /app/suitc/
 COPY src/openinglead /app/openinglead/
 
 # BBA imports "from src.objects" expecting repo-root/src/ layout
-# Create /src symlink so the import resolves to /app/objects.py
 RUN ln -s /app /src
+
+# PIMC native binaries were compiled against boost 1.74; Ubuntu 24.04 ships 1.83.
+# Create compatibility symlinks so dlopen finds the expected sonames.
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libboost_thread.so.1.83.0 /usr/lib/x86_64-linux-gnu/libboost_thread.so.1.74.0 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libboost_system.so.1.83.0 /usr/lib/x86_64-linux-gnu/libboost_system.so.1.74.0 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libboost_date_time.so.1.83.0 /usr/lib/x86_64-linux-gnu/libboost_date_time.so.1.74.0 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libboost_chrono.so.1.83.0 /usr/lib/x86_64-linux-gnu/libboost_chrono.so.1.74.0
 
 EXPOSE 8085
 

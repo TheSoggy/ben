@@ -13,7 +13,7 @@ import os
 bind = f"0.0.0.0:{os.environ.get('BEN_PORT', '8085')}"
 
 # --- Worker processes ---
-workers = int(os.environ.get("BEN_WORKERS", "16"))
+workers = int(os.environ.get("BEN_WORKERS", "2"))
 worker_class = "gevent"
 worker_connections = 100
 
@@ -22,9 +22,9 @@ timeout = 120  # matches previous gevent WSGIServer connection_timeout
 graceful_timeout = 30
 
 # --- Preload ---
-# Load app in master process so TF models are shared via COW across workers.
-# This dramatically reduces memory usage (models ~hundreds of MB, loaded once).
-preload_app = True
+# Disabled: BBA .NET finalizers segfault during GC (uncatchable by Python).
+# Each worker loads models independently. Uses more memory but avoids crash.
+preload_app = False
 
 # --- Logging ---
 accesslog = "-"

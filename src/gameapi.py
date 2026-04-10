@@ -633,34 +633,51 @@ else:
 
 if models.use_bba or models.use_bba_to_count_aces or models.consult_bba or models.use_bba_rollout:
     from bba.BBA import BBABotBid
-    bot = BBABotBid(None, None, None, None, None, None, None, None)
-    print(f"BBA enabled. Version {bot.version()}")    
+    try:
+        bot = BBABotBid(None, None, None, None, None, None, None, None)
+        print(f"BBA enabled. Version {bot.version()}")
+    except Exception as e:
+        print(f"BBA enabled (version check failed: {e})")
 
 if models.use_suitc:
-    from suitc.SuitC import SuitCLib
-    suitc = SuitCLib(verbose)
-    print(f"SuitC enabled. Version {suitc.version()}")
+    try:
+        from suitc.SuitC import SuitCLib
+        suitc = SuitCLib(verbose)
+        print(f"SuitC enabled. Version {suitc.version()}")
+    except Exception as e:
+        print(f"SuitC init failed: {e}")
+        models.use_suitc = False
 
 if models.pimc_use_declaring or models.pimc_use_defending:
-    from pimc.PIMC import BGADLL
-    from pimc.PIMCDef import BGADefDLL
-    if BGADLL.get_dll() is not None:
-        pimc = BGADLL(None, None, None, None, None, None, None)
-        pimcdef = BGADefDLL(None, None, None, None, None, None, None, None)
-        print(f"PIMC enabled. Version {pimc.version()} DDS: {pimc.dds_backend()}")
-        print(f"PIMCDef enabled. Version {pimcdef.version()}")
-    else:
-        print("PIMC/PIMCDef disabled (BGADLL not available for this platform)")
+    try:
+        from pimc.PIMC import BGADLL
+        from pimc.PIMCDef import BGADefDLL
+        if BGADLL.get_dll() is not None:
+            pimc = BGADLL(None, None, None, None, None, None, None)
+            pimcdef = BGADefDLL(None, None, None, None, None, None, None, None)
+            print(f"PIMC enabled. Version {pimc.version()} DDS: {pimc.dds_backend()}")
+            print(f"PIMCDef enabled. Version {pimcdef.version()}")
+        else:
+            print("PIMC/PIMCDef disabled (BGADLL not available for this platform)")
+            models.pimc_use_declaring = False
+            models.pimc_use_defending = False
+    except Exception as e:
+        print(f"PIMC/PIMCDef init failed: {e}")
         models.pimc_use_declaring = False
         models.pimc_use_defending = False
 
 if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False):
-    from ace.ACE import ACEDLL
-    ace = ACEDLL(None, None, None, None, None, None, None)
-    from ace.ACEDef import ACEDefDLL
-    acedef = ACEDefDLL(None, None, None, None, None, None, None, None)
-    print(f"ACE enabled. Version {ace.version()}")
-    print(f"ACEDef enabled. Version {acedef.version()}")
+    try:
+        from ace.ACE import ACEDLL
+        ace = ACEDLL(None, None, None, None, None, None, None)
+        from ace.ACEDef import ACEDefDLL
+        acedef = ACEDefDLL(None, None, None, None, None, None, None, None)
+        print(f"ACE enabled. Version {ace.version()}")
+        print(f"ACEDef enabled. Version {acedef.version()}")
+    except Exception as e:
+        print(f"ACE init failed: {e}")
+        models.ace_use_declaring = False
+        models.ace_use_defending = False
 
 from ddsolver.ddssolver import DDSSolver
 dds_max_threads = configuration.getint('dds', 'dds_max_threads', fallback=0)
