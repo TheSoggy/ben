@@ -616,7 +616,6 @@ except ImportError:
     models.pimc_use_declaring = False
     models.pimc_use_defending = False
 
-
 if models.use_bba:
     print("Using BBA for bidding")
 else:
@@ -811,7 +810,6 @@ elif args.allowed_hosts:
     ALLOWED_HOSTS = set(h.strip() for h in args.allowed_hosts.split(','))
 else:
     ALLOWED_HOSTS = DEFAULT_ALLOWED_HOSTS
-
 
 class SilentAbort(HTTPException):
     code = 444  # Non-standard code to terminate without response

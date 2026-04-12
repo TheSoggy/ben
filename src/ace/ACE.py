@@ -47,7 +47,6 @@ else:
         BIN_FOLDER = os.path.join(BEN_HOME, 'bin')
 
 ACEDLL_LIB = 'Ace'
-
 ACEDLL_PATH = os.path.join(BIN_FOLDER, ACEDLL_LIB)
 
 class ACEDLL:
