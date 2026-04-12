@@ -219,6 +219,10 @@ class CardPlayer:
         if quality < self.models.pimc_bidding_quality:
             weight = 0.5
 
+        # If DD failed (empty), use PIMC results directly
+        if not dd_resp:
+            return pimc_resp
+
         for card52, (e_tricks, e_score, e_make, msg) in dd_resp.items():
             if card52 in pimc_resp:
                 pimc_e_tricks, pimc_e_score, pimc_e_make, pimc_msg = pimc_resp[card52]
@@ -520,7 +524,10 @@ class CardPlayer:
             print("Samples:", n_samples, " Solving:",len(hands_pbn))
         
         dd_solved = self.dds.solve(self.strain_i, leader_i, current_trick52, hands_pbn, 3)
-        
+
+        if dd_solved is None:
+            return {}, ([], None)
+
         # if defending the target is another
         level = int(self.contract[0])
         if self.player_i % 2 == 1:
