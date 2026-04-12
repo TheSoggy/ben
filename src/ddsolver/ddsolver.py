@@ -141,9 +141,11 @@ class DDSolver:
 
         if not all_cards:
             return False
-        # DDS requires all 4 hands to have equal card counts
-        # ("Sum X is not four" crash when hands are unbalanced)
-        if len(set(hand_counts)) != 1:
+        # DDS requires hands to be consistent: all equal (start of trick)
+        # or differing by at most 1 (mid-trick, some players already played).
+        # "Sum X is not four" crash happens when counts are wildly off.
+        min_c, max_c = min(hand_counts), max(hand_counts)
+        if max_c - min_c > 1:
             return False
         return True
 
