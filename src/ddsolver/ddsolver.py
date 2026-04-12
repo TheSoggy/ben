@@ -1,5 +1,8 @@
 import sys
+import os
 import ctypes
+import multiprocessing
+import pickle
 from typing import Dict, List
 from collections import Counter
 from objects import Card
@@ -159,11 +162,60 @@ class DDSolver:
             bo.solutions[handno] = solutions
             bo.mode[handno] = self.dds_mode
 
-        res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
-        if res != 1:
-            error_message = dds.get_error_message(res)
-            print(f"{Fore.RED}Error Code: {res}, Error Message: {error_message} {hands_pbn[0].encode('utf-8')} {current_trick} {leader_i}{Style.RESET_ALL}")
-            return None
+        # Run DDS in a forked child process to isolate segfaults from the server.
+        # DDS's C library can crash on malformed input instead of returning an error.
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            # Child process — run DDS, write result, exit
+            os.close(read_fd)
+            try:
+                res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
+                if res != 1:
+                    os.write(write_fd, pickle.dumps(('error', res, dds.get_error_message(res))))
+                else:
+                    # Extract results in child before sending
+                    result_data = []
+                    for handno in range(bo.noOfBoards):
+                        fut = solved.solvedBoards[handno]
+                        hand_cards = []
+                        for i in range(fut.cards):
+                            hand_cards.append((fut.suit[i], fut.rank[i], fut.score[i], fut.equals[i]))
+                        result_data.append(hand_cards)
+                    os.write(write_fd, pickle.dumps(('ok', result_data)))
+            except Exception as e:
+                os.write(write_fd, pickle.dumps(('exception', str(e))))
+            finally:
+                os.close(write_fd)
+                os._exit(0)
+        else:
+            # Parent process — wait for child
+            os.close(write_fd)
+            data = b''
+            while True:
+                chunk = os.read(read_fd, 65536)
+                if not chunk:
+                    break
+                data += chunk
+            os.close(read_fd)
+            _, status = os.waitpid(pid, 0)
+
+            if not data or (os.WIFSIGNALED(status)):
+                sig = os.WTERMSIG(status) if os.WIFSIGNALED(status) else -1
+                print(f"{Fore.RED}DDS child crashed (signal {sig}), hands: {hands_pbn[0][:60]}...{Style.RESET_ALL}")
+                return None
+
+            msg = pickle.loads(data)
+            if msg[0] == 'error':
+                _, res, error_message = msg
+                print(f"{Fore.RED}Error Code: {res}, Error Message: {error_message} {hands_pbn[0].encode('utf-8')} {current_trick} {leader_i}{Style.RESET_ALL}")
+                return None
+            elif msg[0] == 'exception':
+                print(f"{Fore.RED}DDS exception: {msg[1]}{Style.RESET_ALL}")
+                return None
+
+            # Unpack results from child
+            result_data = msg[1]
 
         if solutions == 1:
             # Just return the maximum number of the side to play for each sample
@@ -171,29 +223,29 @@ class DDSolver:
             card_results["max"] = []
             card_results["min"] = []
             for handno in range(bo.noOfBoards):
-                fut = ctypes.pointer(solved.solvedBoards[handno])
-                suit_i = fut.contents.suit[0]
-                card = suit_i * 13 + 14 - fut.contents.rank[0]
-                card_results["max"].append(fut.contents.score[0])
-                card_results["min"].append(fut.contents.score[fut.contents.cards-1])
+                hand_cards = result_data[handno]
+                if not hand_cards:
+                    continue
+                suit_i, rank_i, score_i, _ = hand_cards[0]
+                card_results["max"].append(score_i)
+                _, _, last_score, _ = hand_cards[-1]
+                card_results["min"].append(last_score)
 
         else:
             card_results = {}
             for handno in range(bo.noOfBoards):
-                fut = ctypes.pointer(solved.solvedBoards[handno])
-                for i in range(fut.contents.cards):
-                    suit_i = fut.contents.suit[i]
-                    card = suit_i * 13 + 14 - fut.contents.rank[i]
+                hand_cards = result_data[handno]
+                for i, (suit_i, rank_i, score_i, eq_encoded) in enumerate(hand_cards):
+                    card = suit_i * 13 + 14 - rank_i
                     if card not in card_results:
                         card_results[card] = []
-                    card_results[card].append(fut.contents.score[i])
-                    eq_cards_encoded = fut.contents.equals[i]
+                    card_results[card].append(score_i)
                     for k, rank_code in enumerate(card_rank):
-                        if rank_code & eq_cards_encoded > 0:
+                        if rank_code & eq_encoded > 0:
                             eq_card = suit_i * 13 + k
                             if eq_card not in card_results:
                                 card_results[eq_card] = []
-                            card_results[eq_card].append(fut.contents.score[i])
+                            card_results[eq_card].append(score_i)
 
         return card_results
 
