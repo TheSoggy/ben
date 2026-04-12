@@ -234,7 +234,10 @@ class DDSolver:
                 return None
 
             if proc.returncode != 0:
+                stderr_msg = proc.stderr.strip()[:200] if proc.stderr else ""
                 print(f"{Fore.RED}DDS subprocess crashed (rc={proc.returncode}), pbn[0]={hands_pbn[0][:80]}{Style.RESET_ALL}")
+                if stderr_msg:
+                    print(f"{Fore.RED}DDS stderr: {stderr_msg}{Style.RESET_ALL}")
                 return None
 
             try:
