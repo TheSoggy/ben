@@ -108,8 +108,35 @@ class DDSolver:
 
         return results 
 
+    @staticmethod
+    def _validate_pbn(pbn_str):
+        """Validate PBN deal string has exactly 4 hands with equal card counts."""
+        pbn = pbn_str
+        if ':' in pbn:
+            pbn = pbn.split(':', 1)[1]
+        hands = pbn.strip().split(' ')
+        if len(hands) != 4:
+            return False
+        counts = []
+        for hand in hands:
+            count = sum(1 for c in hand if c not in '. ')
+            counts.append(count)
+        # All hands must have the same number of cards
+        if len(set(counts)) != 1:
+            return False
+        return True
+
     def solve_helper(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
         card_rank = [0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200, 0x0100, 0x0080, 0x0040, 0x0020, 0x0010, 0x0008, 0x0004]
+
+        # Filter out invalid PBN deals to prevent DDS segfault
+        valid_hands = [h for h in hands_pbn if self._validate_pbn(h)]
+        if not valid_hands:
+            print(f"{Fore.RED}All {len(hands_pbn)} PBN deals invalid, skipping DDS solve{Style.RESET_ALL}")
+            return {}
+        if len(valid_hands) < len(hands_pbn):
+            print(f"{Fore.YELLOW}Filtered {len(hands_pbn) - len(valid_hands)} invalid PBN deals{Style.RESET_ALL}")
+        hands_pbn = valid_hands
 
         # Allocate per-call structures to avoid race conditions with concurrent API workers
         bo = dds.boardsPBN()
