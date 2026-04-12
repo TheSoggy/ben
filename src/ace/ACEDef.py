@@ -59,6 +59,9 @@ class ACEDefDLL:
         if cls._dll_loaded is None:
             with cls._lock:
                 if cls._dll_loaded is None:
+                    # Ace.dll is a Windows .NET assembly — skip on non-Windows
+                    if sys.platform != 'win32':
+                        return None
                     try:
                         util.load_dotnet_framework_assembly(ACEDLL_PATH, verbose)
 
