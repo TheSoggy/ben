@@ -113,47 +113,61 @@ class DDSolver:
     @staticmethod
     def _validate_pbn(pbn_str):
         """Validate PBN deal for DDS: 4 hands, 4 suits each, valid cards,
-        no duplicate cards, and all hands have the same card count."""
+        no duplicate cards, and all hands have consistent card counts.
+        Returns (True, None) or (False, reason)."""
         pbn = pbn_str
         if ':' in pbn:
             pbn = pbn.split(':', 1)[1]
         hands = pbn.strip().split(' ')
         if len(hands) != 4:
-            return False
+            return False, f"hands={len(hands)}"
 
         all_cards = set()
         hand_counts = []
-        for hand in hands:
+        suit_totals = [0, 0, 0, 0]
+        for hand_idx, hand in enumerate(hands):
             suits = hand.split('.')
             if len(suits) != 4:
-                return False
+                return False, f"hand[{hand_idx}] suits={len(suits)}"
             count = 0
             for suit_idx, suit_cards in enumerate(suits):
                 for c in suit_cards:
                     if c not in DDSolver._VALID_CARDS:
-                        return False
+                        return False, f"hand[{hand_idx}] bad card '{c}'"
                     card_key = (suit_idx, c)
                     if card_key in all_cards:
-                        return False  # Duplicate card
+                        return False, f"dup {c} suit {suit_idx}"
                     all_cards.add(card_key)
                     count += 1
+                suit_totals[suit_idx] += len(suit_cards)
             hand_counts.append(count)
 
         if not all_cards:
-            return False
+            return False, "empty"
         # DDS requires hands to be consistent: all equal (start of trick)
         # or differing by at most 1 (mid-trick, some players already played).
-        # "Sum X is not four" crash happens when counts are wildly off.
         min_c, max_c = min(hand_counts), max(hand_counts)
         if max_c - min_c > 1:
-            return False
-        return True
+            return False, f"counts={hand_counts}"
+        # Each suit should have at most 13 cards total
+        for i, st in enumerate(suit_totals):
+            if st > 13:
+                return False, f"suit[{i}] total={st}"
+        return True, None
 
     def solve_helper(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
         card_rank = [0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200, 0x0100, 0x0080, 0x0040, 0x0020, 0x0010, 0x0008, 0x0004]
 
         # Filter out invalid PBN deals to prevent DDS crash (C library aborts on bad input)
-        valid_hands = [h for h in hands_pbn if self._validate_pbn(h)]
+        valid_hands = []
+        for h in hands_pbn:
+            ok, reason = self._validate_pbn(h)
+            if ok:
+                valid_hands.append(h)
+            elif len(valid_hands) == 0 and len(hands_pbn) - len(valid_hands) <= 5:
+                # Log first few rejected PBNs for debugging
+                sys.stderr.write(f"PBN rejected ({reason}): {h[:100]}\n")
+                sys.stderr.flush()
         if not valid_hands:
             print(f"{Fore.RED}All {len(hands_pbn)} PBN deals invalid, skipping DDS solve{Style.RESET_ALL}")
             return {}
@@ -184,6 +198,10 @@ class DDSolver:
             # Return all cards that can be legally played, with their scores in descending order.
             bo.solutions[handno] = solutions
             bo.mode[handno] = self.dds_mode
+
+        # Log first PBN before DDS call — flush so it's visible even if DDS crashes
+        sys.stderr.write(f"DDS solve: {bo.noOfBoards} boards, trick={current_trick}, leader={leader_i}, pbn[0]={hands_pbn[0][:80]}\n")
+        sys.stderr.flush()
 
         res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
         if res != 1:
