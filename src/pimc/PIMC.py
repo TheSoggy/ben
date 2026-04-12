@@ -145,6 +145,19 @@ class BGADLL:
         self.verbose = verbose
         self.trump = self.find_trump(self.suit)
 
+        # Passed-hand HCP cap (set via set_passed_hands)
+        self.passed_lho = False
+        self.passed_rho = False
+        self.passed_hand_hcp_cap = 0
+
+    def set_passed_hands(self, passed_positions, hcp_cap):
+        """Mark opponents who passed in opening position for HCP capping."""
+        self.passed_lho = passed_positions.get(0, False)
+        self.passed_rho = passed_positions.get(2, False)
+        self.passed_hand_hcp_cap = hcp_cap
+        if self.verbose and (self.passed_lho or self.passed_rho):
+            print(f"Passed hand HCP cap={hcp_cap}: LHO={self.passed_lho}, RHO={self.passed_rho}")
+
     def version(self):
         dll = BGADLL.get_dll()  # Retrieve the loaded DLL classes through the singleton
         PIMC = dll["PIMC"]
@@ -283,6 +296,15 @@ class BGADLL:
         self.lho_constraints.MaxHCP = min(max_lho+margin-self.already_shown_hcp_lho, 37)
         self.rho_constraints.MinHCP = max(min_rho-margin-self.already_shown_hcp_rho, 0)
         self.rho_constraints.MaxHCP = min(max_rho+margin-self.already_shown_hcp_rho, 37)
+
+        # Cap HCP for opponents who passed in opening position
+        if self.passed_lho and self.passed_hand_hcp_cap > 0:
+            cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_lho, 0)
+            self.lho_constraints.MaxHCP = min(self.lho_constraints.MaxHCP, cap)
+        if self.passed_rho and self.passed_hand_hcp_cap > 0:
+            cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_rho, 0)
+            self.rho_constraints.MaxHCP = min(self.rho_constraints.MaxHCP, cap)
+
         if self.verbose:
             print("set_hcp_constraints")
             print("East (RHO)",self.rho_constraints.ToString())

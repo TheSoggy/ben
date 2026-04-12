@@ -178,10 +178,10 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
         pimc[2] = None
 
     card_players = [
-        CardPlayer(models, 0, lefty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[0], dds, verbose),
-        CardPlayer(models, 1, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, pimc[1], dds, verbose),
-        CardPlayer(models, 2, righty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[2], dds, verbose),
-        CardPlayer(models, 3, decl_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[3], dds, verbose)
+        CardPlayer(models, 0, lefty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[0], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
+        CardPlayer(models, 1, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, pimc[1], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
+        CardPlayer(models, 2, righty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[2], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
+        CardPlayer(models, 3, decl_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[3], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i)
     ]
 
     # Clear sample cache at start of new hand
@@ -678,8 +678,8 @@ if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defen
         acedef = ACEDefDLL(None, None, None, None, None, None, None, None)
         print(f"ACE enabled. Version {ace.version()}")
         print(f"ACEDef enabled. Version {acedef.version()}")
-    except Exception as e:
-        print(f"ACE init failed: {e}")
+    except (Exception, SystemExit) as e:
+        print(f"ACE init failed: {e} — disabling ACE, falling back to PIMC/NN")
         models.ace_use_declaring = False
         models.ace_use_defending = False
 
@@ -2013,10 +2013,10 @@ def autoplay():
                 print(f"[Autoplay] PIMC (defender) enabled")
 
         card_players = [
-            CardPlayer(models, 0, lefty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[0], dds, verbose),
-            CardPlayer(models, 1, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, pimc[1], dds, verbose),
-            CardPlayer(models, 2, righty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[2], dds, verbose),
-            CardPlayer(models, 3, decl_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[3], dds, verbose)
+            CardPlayer(models, 0, lefty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[0], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
+            CardPlayer(models, 1, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, pimc[1], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
+            CardPlayer(models, 2, righty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[2], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
+            CardPlayer(models, 3, decl_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[3], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i)
         ]
 
         # Clear sample cache at start of new hand

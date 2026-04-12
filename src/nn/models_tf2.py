@@ -96,7 +96,7 @@ class Models:
                  lead_accept_nn, ns, ew, bba_our_cc, bba_their_cc, use_bba, consult_bba, bba_trust, use_bba_rollout, use_bba_to_count_aces, estimator, claim, play_reward_threshold_NN, play_reward_threshold_NN_factor_IMP, play_reward_threshold_NN_factor_MP, check_remaining_cards, check_discard, double_dummy, lead_from_pips_nt, lead_from_pips_suit, min_opening_leads, sample_hands_for_review, use_biddingquality, use_biddingquality_in_eval, 
                  double_dummy_calculator, opening_lead_included, use_probability, matchpoint, pimc_verbose, pimc_use_declaring, pimc_use_defending, pimc_use_discarding, pimc_wait, pimc_start_trick_declarer, pimc_start_trick_defender, pimc_stop_trick_declarer, pimc_stop_trick_defender, pimc_constraints, 
                  pimc_constraints_each_trick, pimc_max_playouts, autoplaysingleton, pimc_max_threads, pimc_trust_NN, pimc_ben_dd_declaring, pimc_use_fusion_strategy, pimc_ben_dd_defending, pimc_apriori_probability, 
-                 pimc_ben_dd_declaring_weight, pimc_ben_dd_defending_weight, pimc_margin_suit, pimc_margin_hcp, pimc_margin_suit_bad_samples, pimc_margin_hcp_bad_samples, pimc_bidding_quality, pimc_after_preempt, pimc_after_preempt_weight,
+                 pimc_ben_dd_declaring_weight, pimc_ben_dd_defending_weight, pimc_margin_suit, pimc_margin_hcp, pimc_margin_suit_bad_samples, pimc_margin_hcp_bad_samples, pimc_bidding_quality, pimc_after_preempt, pimc_after_preempt_weight, passed_hand_hcp_cap,
                  ace_use_declaring, ace_use_defending, ace_search_duration, ace_iterations, ace_search_depth, ace_threads,
                  ace_start_trick_declarer, ace_start_trick_defender, ace_stop_trick_declarer, ace_stop_trick_defender,
                  ace_exploration, ace_limiter, ace_verbose,
@@ -190,6 +190,7 @@ class Models:
         self.pimc_bidding_quality = pimc_bidding_quality
         self.pimc_after_preempt = pimc_after_preempt
         self.pimc_after_preempt_weight = pimc_after_preempt_weight
+        self.passed_hand_hcp_cap = passed_hand_hcp_cap
         self.ace_use_declaring = ace_use_declaring
         self.ace_use_defending = ace_use_defending
         self.ace_search_duration = ace_search_duration
@@ -342,6 +343,7 @@ class Models:
         pimc_bidding_quality = conf.getfloat('pimc', 'pimc_bidding_quality', fallback=0.4)
         pimc_after_preempt = conf.getboolean('pimc', 'pimc_after_preempt', fallback=False)
         pimc_after_preempt_weight = conf.getfloat('pimc', 'pimc_after_preempt_weight', fallback=0.75)
+        passed_hand_hcp_cap = conf.getint('pimc', 'passed_hand_hcp_cap', fallback=0)
 
         # ACE configuration (Ace.dll - MCTS with Model-based evaluation)
         ace_use_declaring = conf.getboolean('ace', 'ace_use_declaring', fallback=False)
@@ -537,6 +539,7 @@ class Models:
             pimc_bidding_quality = pimc_bidding_quality,
             pimc_after_preempt = pimc_after_preempt,
             pimc_after_preempt_weight = pimc_after_preempt_weight,
+            passed_hand_hcp_cap = passed_hand_hcp_cap,
             ace_use_declaring=ace_use_declaring,
             ace_use_defending=ace_use_defending,
             ace_search_duration=ace_search_duration,

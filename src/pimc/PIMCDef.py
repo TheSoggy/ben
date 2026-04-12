@@ -143,6 +143,24 @@ class BGADefDLL:
         self.verbose = verbose
         self.trump = self.find_trump(self.suit)
 
+        # Passed-hand HCP cap (set via set_passed_hands)
+        self.passed_declarer = False
+        self.passed_partner = False
+        self.passed_hand_hcp_cap = 0
+
+    def set_passed_hands(self, passed_positions, hcp_cap):
+        """Mark opponents who passed in opening position for HCP capping.
+
+        For defender play: 'declarer' constraint = declarer (rel pos 3),
+        'partner' constraint = the other defender.
+        """
+        self.passed_declarer = passed_positions.get(3, False)
+        partner_pos = 2 if self.player_i == 0 else 0
+        self.passed_partner = passed_positions.get(partner_pos, False)
+        self.passed_hand_hcp_cap = hcp_cap
+        if self.verbose and (self.passed_declarer or self.passed_partner):
+            print(f"Passed hand HCP cap={hcp_cap}: declarer={self.passed_declarer}, partner={self.passed_partner}")
+
     def version(self):
         dll = BGADefDLL.get_dll()  # Retrieve the loaded DLL classes through the singleton
         PIMCDef = dll["PIMCDef"]
@@ -257,6 +275,14 @@ class BGADefDLL:
         self.declarer_constraints.MaxHCP = min(max_declarer+margin-self.already_shown_hcp_declarer, 37)
         self.partner_constraints.MinHCP = max(min_partner-margin-self.already_shown_hcp_partner, 0)
         self.partner_constraints.MaxHCP = min(max_partner+margin-self.already_shown_hcp_partner, 37)
+
+        # Cap HCP for players who passed in opening position
+        if self.passed_declarer and self.passed_hand_hcp_cap > 0:
+            cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_declarer, 0)
+            self.declarer_constraints.MaxHCP = min(self.declarer_constraints.MaxHCP, cap)
+        if self.passed_partner and self.passed_hand_hcp_cap > 0:
+            cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_partner, 0)
+            self.partner_constraints.MaxHCP = min(self.partner_constraints.MaxHCP, cap)
 
         if self.verbose:
             print("set_hcp_constraints")

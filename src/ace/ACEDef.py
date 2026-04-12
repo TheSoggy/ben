@@ -148,6 +148,26 @@ class ACEDefDLL:
         self.shown_voids_declarer = set()
         self.shown_voids_partner = set()
 
+        # Passed-hand HCP cap (set via set_passed_hands)
+        self.passed_declarer = False
+        self.passed_partner = False
+        self.passed_hand_hcp_cap = 0
+
+    def set_passed_hands(self, passed_positions, hcp_cap):
+        """Mark opponents who passed in opening position for HCP capping.
+
+        For defender play: 'declarer' is declarer (rel pos 3),
+        'partner' is the other defender (rel pos 0 or 2 depending on player_i).
+        """
+        self.passed_declarer = passed_positions.get(3, False)  # declarer
+        # Partner is the other defender — if player_i=0 (LHO), partner is RHO (pos 2)
+        # if player_i=2 (RHO), partner is LHO (pos 0)
+        partner_pos = 2 if self.player_i == 0 else 0
+        self.passed_partner = passed_positions.get(partner_pos, False)
+        self.passed_hand_hcp_cap = hcp_cap
+        if self.verbose and (self.passed_declarer or self.passed_partner):
+            print(f"Passed hand HCP cap={hcp_cap}: declarer={self.passed_declarer}, partner={self.passed_partner}")
+
     def version(self):
         try:
             dll = ACEDefDLL.get_dll(False)
@@ -246,6 +266,14 @@ class ACEDefDLL:
         self.declarer_constraints[9] = min(max_declarer + margin - self.already_shown_hcp_declarer, 37)
         self.partner_constraints[8] = max(min_partner - margin - self.already_shown_hcp_partner, 0)
         self.partner_constraints[9] = min(max_partner + margin - self.already_shown_hcp_partner, 37)
+
+        # Cap HCP for players who passed in opening position
+        if self.passed_declarer and self.passed_hand_hcp_cap > 0:
+            cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_declarer, 0)
+            self.declarer_constraints[9] = min(self.declarer_constraints[9], cap)
+        if self.passed_partner and self.passed_hand_hcp_cap > 0:
+            cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_partner, 0)
+            self.partner_constraints[9] = min(self.partner_constraints[9], cap)
 
         if self.verbose:
             print("set_hcp_constraints")

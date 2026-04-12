@@ -574,10 +574,10 @@ class Driver:
             pimc[2] = None
 
         card_players = [
-            AsyncCardPlayer(self.models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[0], self.dds, self.verbose),
-            AsyncCardPlayer(self.models, 1, dummy_hand, decl_hand, contract, is_decl_vuln, self.sampler, pimc[1], self.dds, self.verbose),
-            AsyncCardPlayer(self.models, 2, righty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[2], self.dds, self.verbose),
-            AsyncCardPlayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[3], self.dds, self.verbose)
+            AsyncCardPlayer(self.models, 0, lefty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[0], self.dds, self.verbose, auction=auction, dealer_i=self.dealer_i, decl_i=decl_i),
+            AsyncCardPlayer(self.models, 1, dummy_hand, decl_hand, contract, is_decl_vuln, self.sampler, pimc[1], self.dds, self.verbose, auction=auction, dealer_i=self.dealer_i, decl_i=decl_i),
+            AsyncCardPlayer(self.models, 2, righty_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[2], self.dds, self.verbose, auction=auction, dealer_i=self.dealer_i, decl_i=decl_i),
+            AsyncCardPlayer(self.models, 3, decl_hand, dummy_hand, contract, is_decl_vuln, self.sampler, pimc[3], self.dds, self.verbose, auction=auction, dealer_i=self.dealer_i, decl_i=decl_i)
         ]
 
         # check if user is playing and update card players accordingly

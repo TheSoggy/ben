@@ -19,9 +19,39 @@ from util import hand_to_str, follow_suit, calculate_seed, symbols
 from colorama import Fore, init
 from nn.timing import ModelTimer
 init()
+
+def get_passed_positions(auction, dealer_i, decl_i):
+    """Determine which players passed when they could have opened.
+
+    Returns a dict mapping declarer-relative positions (0=LHO, 1=dummy, 2=RHO, 3=declarer)
+    to True if that player passed in an opening position.
+
+    A player is in "opening position" if no one has made a real bid before them.
+    The auction may contain PAD_START entries which are skipped.
+    """
+    passed = {}
+    if auction is None:
+        return passed
+
+    # Strip PAD_START padding — real bids start at dealer_i
+    real_bids = [b for b in auction if b != 'PAD_START']
+
+    for i, bid in enumerate(real_bids):
+        abs_pos = (dealer_i + i) % 4
+        # Convert absolute position to declarer-relative
+        rel_pos = (abs_pos - (decl_i + 1)) % 4  # 0=LHO, 1=dummy, 2=RHO, 3=declarer
+
+        if bid.upper() == "PASS":
+            passed[rel_pos] = True
+        else:
+            # First real bid found — no more opening positions after this
+            break
+
+    return passed
+
 class CardPlayer:
 
-    def __init__(self, models, player_i, hand_str, public_hand_str, contract, is_decl_vuln, sampler, pimc = None, ddsolver = None, verbose = False):
+    def __init__(self, models, player_i, hand_str, public_hand_str, contract, is_decl_vuln, sampler, pimc = None, ddsolver = None, verbose = False, auction = None, dealer_i = 0, decl_i = 0):
         self.models = models
         self.player_models = models.player_models
         self.strain_i = bidding.get_strain_i(contract)
@@ -65,6 +95,10 @@ class CardPlayer:
                 if self.verbose:
                     print(f"Setting seed {player_i} (Sampling bidding info) from {hand_str}: {self.hash_integer}")
             self.pimc = pimc
+            # Passed-hand HCP cap: detect which opponents passed in opening position
+            passed = get_passed_positions(auction, dealer_i, decl_i)
+            if pimc is not None and models.passed_hand_hcp_cap > 0:
+                pimc.set_passed_hands(passed, models.passed_hand_hcp_cap)
             # False until it kicks in
             self.pimc_declaring = False
             self.pimc_defending = False
