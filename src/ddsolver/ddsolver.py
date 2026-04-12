@@ -110,20 +110,17 @@ class DDSolver:
 
     @staticmethod
     def _validate_pbn(pbn_str):
-        """Validate PBN deal string has exactly 4 hands with equal card counts."""
+        """Validate PBN deal string: 4 hands, each with exactly 4 suits (3 dots)."""
         pbn = pbn_str
         if ':' in pbn:
             pbn = pbn.split(':', 1)[1]
         hands = pbn.strip().split(' ')
         if len(hands) != 4:
             return False
-        counts = []
         for hand in hands:
-            count = sum(1 for c in hand if c not in '. ')
-            counts.append(count)
-        # All hands must have the same number of cards
-        if len(set(counts)) != 1:
-            return False
+            # Each hand must have exactly 3 dots (4 suits)
+            if hand.count('.') != 3:
+                return False
         return True
 
     def solve_helper(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
