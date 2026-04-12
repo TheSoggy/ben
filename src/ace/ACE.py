@@ -215,17 +215,22 @@ class ACEDLL:
             else:
                 min_lho[i] = max(min_lho[i] - margin - self.already_shown_lho[i], 0)
             if max_lho[i] <= 2:
-                max_lho[i] = min(max_lho[i] + 1 - self.already_shown_lho[i], 13)
+                max_lho[i] = max(min(max_lho[i] + 1 - self.already_shown_lho[i], 13), 0)
             else:
-                max_lho[i] = min(max_lho[i] + margin - self.already_shown_lho[i], 13)
+                max_lho[i] = max(min(max_lho[i] + margin - self.already_shown_lho[i], 13), 0)
             if min_rho[i] >= 5:
                 min_rho[i] = max(min_rho[i] - 1 - self.already_shown_rho[i], 0)
             else:
                 min_rho[i] = max(min_rho[i] - margin - self.already_shown_rho[i], 0)
             if max_rho[i] <= 2:
-                max_rho[i] = min(max_rho[i] + 1 - self.already_shown_rho[i], 13)
+                max_rho[i] = max(min(max_rho[i] + 1 - self.already_shown_rho[i], 13), 0)
             else:
-                max_rho[i] = min(max_rho[i] + margin - self.already_shown_rho[i], 13)
+                max_rho[i] = max(min(max_rho[i] + margin - self.already_shown_rho[i], 13), 0)
+            # Ensure min <= max for each suit
+            if min_lho[i] > max_lho[i]:
+                min_lho[i] = max_lho[i]
+            if min_rho[i] > max_rho[i]:
+                min_rho[i] = max_rho[i]
 
         self.lho_constraints[0] = int(min_lho[0])
         self.lho_constraints[1] = int(max_lho[0])
@@ -262,9 +267,9 @@ class ACEDLL:
             margin = self.models.pimc_margin_hcp_bad_samples
 
         self.lho_constraints[8] = max(min_lho - margin - self.already_shown_hcp_lho, 0)
-        self.lho_constraints[9] = min(max_lho + margin - self.already_shown_hcp_lho, 37)
+        self.lho_constraints[9] = max(min(max_lho + margin - self.already_shown_hcp_lho, 37), 0)
         self.rho_constraints[8] = max(min_rho - margin - self.already_shown_hcp_rho, 0)
-        self.rho_constraints[9] = min(max_rho + margin - self.already_shown_hcp_rho, 37)
+        self.rho_constraints[9] = max(min(max_rho + margin - self.already_shown_hcp_rho, 37), 0)
 
         # Cap HCP for opponents who passed in opening position
         if self.passed_lho and self.passed_hand_hcp_cap > 0:
@@ -273,6 +278,12 @@ class ACEDLL:
         if self.passed_rho and self.passed_hand_hcp_cap > 0:
             cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_rho, 0)
             self.rho_constraints[9] = min(self.rho_constraints[9], cap)
+
+        # Ensure min <= max for HCP
+        if self.lho_constraints[8] > self.lho_constraints[9]:
+            self.lho_constraints[8] = self.lho_constraints[9]
+        if self.rho_constraints[8] > self.rho_constraints[9]:
+            self.rho_constraints[8] = self.rho_constraints[9]
 
         if self.verbose:
             print("set_hcp_constraints")
@@ -287,15 +298,24 @@ class ACEDLL:
             idx = suit * 2
             self.rho_constraints[idx] = max(0, self.rho_constraints[idx] - 1)
             self.rho_constraints[idx + 1] = max(0, self.rho_constraints[idx + 1] - 1)
+            # Ensure min <= max after decrement
+            if self.rho_constraints[idx] > self.rho_constraints[idx + 1]:
+                self.rho_constraints[idx] = self.rho_constraints[idx + 1]
             self.rho_constraints[8] = max(0, self.rho_constraints[8] - hcp)
             self.rho_constraints[9] = max(0, self.rho_constraints[9] - hcp)
+            if self.rho_constraints[8] > self.rho_constraints[9]:
+                self.rho_constraints[8] = self.rho_constraints[9]
 
         if playedBy == 0:  # LHO (West)
             idx = suit * 2
             self.lho_constraints[idx] = max(0, self.lho_constraints[idx] - 1)
             self.lho_constraints[idx + 1] = max(0, self.lho_constraints[idx + 1] - 1)
+            if self.lho_constraints[idx] > self.lho_constraints[idx + 1]:
+                self.lho_constraints[idx] = self.lho_constraints[idx + 1]
             self.lho_constraints[8] = max(0, self.lho_constraints[8] - hcp)
             self.lho_constraints[9] = max(0, self.lho_constraints[9] - hcp)
+            if self.lho_constraints[8] > self.lho_constraints[9]:
+                self.lho_constraints[8] = self.lho_constraints[9]
 
         if self.verbose:
             print("East (RHO)", self.rho_constraints)

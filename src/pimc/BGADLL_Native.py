@@ -84,13 +84,21 @@ def _get_lib():
                 if os.path.isfile(dds_path):
                     ctypes.CDLL(dds_path)
                     # NativeAOT P/Invoke looks for "dds.dll" by filename;
-                    # create a symlink next to libdds.so so it can be resolved
+                    # create a symlink next to the library so it can be resolved
                     dds_dll_link = os.path.join(os.path.dirname(dds_path), 'dds.dll')
                     if not os.path.exists(dds_dll_link):
                         try:
                             os.symlink(os.path.basename(dds_path), dds_dll_link)
                         except OSError:
                             pass
+                    # On macOS, NativeAOT P/Invoke resolves "dds.dll" via dlopen
+                    # which doesn't search relative to the calling library.
+                    # Add the directory to DYLD_LIBRARY_PATH so dlopen can find it.
+                    if sys.platform == 'darwin':
+                        dds_dir = os.path.dirname(os.path.abspath(dds_path))
+                        dyld_path = os.environ.get('DYLD_LIBRARY_PATH', '')
+                        if dds_dir not in dyld_path:
+                            os.environ['DYLD_LIBRARY_PATH'] = dds_dir + (':' + dyld_path if dyld_path else '')
                     break
         _lib = ctypes.CDLL(_lib_path)
         _setup_functions(_lib)

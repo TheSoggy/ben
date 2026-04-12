@@ -216,17 +216,22 @@ class ACEDefDLL:
             else:
                 min_declarer[i] = max(min_declarer[i] - margin - self.already_shown_declarer[i], 0)
             if max_declarer[i] <= 2:
-                max_declarer[i] = min(max_declarer[i] + 1 - self.already_shown_declarer[i], 13)
+                max_declarer[i] = max(min(max_declarer[i] + 1 - self.already_shown_declarer[i], 13), 0)
             else:
-                max_declarer[i] = min(max_declarer[i] + margin - self.already_shown_declarer[i], 13)
+                max_declarer[i] = max(min(max_declarer[i] + margin - self.already_shown_declarer[i], 13), 0)
             if min_partner[i] >= 5:
                 min_partner[i] = max(min_partner[i] - 1 - self.already_shown_partner[i], 0)
             else:
                 min_partner[i] = max(min_partner[i] - margin - self.already_shown_partner[i], 0)
             if max_partner[i] <= 2:
-                max_partner[i] = min(max_partner[i] + 1 - self.already_shown_partner[i], 13)
+                max_partner[i] = max(min(max_partner[i] + 1 - self.already_shown_partner[i], 13), 0)
             else:
-                max_partner[i] = min(max_partner[i] + margin - self.already_shown_partner[i], 13)
+                max_partner[i] = max(min(max_partner[i] + margin - self.already_shown_partner[i], 13), 0)
+            # Ensure min <= max for each suit
+            if min_declarer[i] > max_declarer[i]:
+                min_declarer[i] = max_declarer[i]
+            if min_partner[i] > max_partner[i]:
+                min_partner[i] = max_partner[i]
 
         self.declarer_constraints[0] = int(min_declarer[0])
         self.declarer_constraints[1] = int(max_declarer[0])
@@ -263,9 +268,9 @@ class ACEDefDLL:
             margin = self.models.pimc_margin_hcp_bad_samples
 
         self.declarer_constraints[8] = max(min_declarer - margin - self.already_shown_hcp_declarer, 0)
-        self.declarer_constraints[9] = min(max_declarer + margin - self.already_shown_hcp_declarer, 37)
+        self.declarer_constraints[9] = max(min(max_declarer + margin - self.already_shown_hcp_declarer, 37), 0)
         self.partner_constraints[8] = max(min_partner - margin - self.already_shown_hcp_partner, 0)
-        self.partner_constraints[9] = min(max_partner + margin - self.already_shown_hcp_partner, 37)
+        self.partner_constraints[9] = max(min(max_partner + margin - self.already_shown_hcp_partner, 37), 0)
 
         # Cap HCP for players who passed in opening position
         if self.passed_declarer and self.passed_hand_hcp_cap > 0:
@@ -274,6 +279,12 @@ class ACEDefDLL:
         if self.passed_partner and self.passed_hand_hcp_cap > 0:
             cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_partner, 0)
             self.partner_constraints[9] = min(self.partner_constraints[9], cap)
+
+        # Ensure min <= max for HCP
+        if self.declarer_constraints[8] > self.declarer_constraints[9]:
+            self.declarer_constraints[8] = self.declarer_constraints[9]
+        if self.partner_constraints[8] > self.partner_constraints[9]:
+            self.partner_constraints[8] = self.partner_constraints[9]
 
         if self.verbose:
             print("set_hcp_constraints")
@@ -289,27 +300,43 @@ class ACEDefDLL:
                 idx = suit * 2
                 self.declarer_constraints[idx] = max(0, self.declarer_constraints[idx] - 1)
                 self.declarer_constraints[idx + 1] = max(0, self.declarer_constraints[idx + 1] - 1)
+                if self.declarer_constraints[idx] > self.declarer_constraints[idx + 1]:
+                    self.declarer_constraints[idx] = self.declarer_constraints[idx + 1]
                 self.declarer_constraints[8] = max(0, self.declarer_constraints[8] - hcp)
                 self.declarer_constraints[9] = max(0, self.declarer_constraints[9] - hcp)
+                if self.declarer_constraints[8] > self.declarer_constraints[9]:
+                    self.declarer_constraints[8] = self.declarer_constraints[9]
             elif playedBy == 2:
                 idx = suit * 2
                 self.partner_constraints[idx] = max(0, self.partner_constraints[idx] - 1)
                 self.partner_constraints[idx + 1] = max(0, self.partner_constraints[idx + 1] - 1)
+                if self.partner_constraints[idx] > self.partner_constraints[idx + 1]:
+                    self.partner_constraints[idx] = self.partner_constraints[idx + 1]
                 self.partner_constraints[8] = max(0, self.partner_constraints[8] - hcp)
                 self.partner_constraints[9] = max(0, self.partner_constraints[9] - hcp)
+                if self.partner_constraints[8] > self.partner_constraints[9]:
+                    self.partner_constraints[8] = self.partner_constraints[9]
         else:
             if playedBy == 3:
                 idx = suit * 2
                 self.declarer_constraints[idx] = max(0, self.declarer_constraints[idx] - 1)
                 self.declarer_constraints[idx + 1] = max(0, self.declarer_constraints[idx + 1] - 1)
+                if self.declarer_constraints[idx] > self.declarer_constraints[idx + 1]:
+                    self.declarer_constraints[idx] = self.declarer_constraints[idx + 1]
                 self.declarer_constraints[8] = max(0, self.declarer_constraints[8] - hcp)
                 self.declarer_constraints[9] = max(0, self.declarer_constraints[9] - hcp)
+                if self.declarer_constraints[8] > self.declarer_constraints[9]:
+                    self.declarer_constraints[8] = self.declarer_constraints[9]
             elif playedBy == 0:
                 idx = suit * 2
                 self.partner_constraints[idx] = max(0, self.partner_constraints[idx] - 1)
                 self.partner_constraints[idx + 1] = max(0, self.partner_constraints[idx + 1] - 1)
+                if self.partner_constraints[idx] > self.partner_constraints[idx + 1]:
+                    self.partner_constraints[idx] = self.partner_constraints[idx + 1]
                 self.partner_constraints[8] = max(0, self.partner_constraints[8] - hcp)
                 self.partner_constraints[9] = max(0, self.partner_constraints[9] - hcp)
+                if self.partner_constraints[8] > self.partner_constraints[9]:
+                    self.partner_constraints[8] = self.partner_constraints[9]
 
         if self.verbose:
             print("Declarer", self.declarer_constraints)

@@ -229,24 +229,29 @@ class BGADLL:
             if i == self.trump:
                 # We will not change constraints on trump suit
                 continue
-            # If samples show 5-card+ we only reduce by 1 
+            # If samples show 5-card+ we only reduce by 1
             if min_lho[i] >= 5:
                 min_lho[i] = max(min_lho[i] - 1 - self.already_shown_lho[i], 0)
-            else: 
-                min_lho[i] = max(min_lho[i] - margin - self.already_shown_lho[i], 0)
-            # If samples show 2-card- we only increase by 1 
-            if max_rho[i] <= 2:
-                max_lho[i] = min(max_lho[i] + 1 - self.already_shown_lho[i], 13)
             else:
-                max_lho[i] = min(max_lho[i] + margin - self.already_shown_lho[i], 13)
+                min_lho[i] = max(min_lho[i] - margin - self.already_shown_lho[i], 0)
+            # If samples show 2-card- we only increase by 1
+            if max_rho[i] <= 2:
+                max_lho[i] = max(min(max_lho[i] + 1 - self.already_shown_lho[i], 13), 0)
+            else:
+                max_lho[i] = max(min(max_lho[i] + margin - self.already_shown_lho[i], 13), 0)
             if min_rho[i] >= 5:
                 min_rho[i] = max(min_rho[i] - 1 - self.already_shown_rho[i], 0)
             else:
                 min_rho[i] = max(min_rho[i] - margin - self.already_shown_rho[i], 0)
             if max_rho[i] <= 2:
-                max_rho[i] = min(max_rho[i] + 1 - self.already_shown_rho[i], 13)
+                max_rho[i] = max(min(max_rho[i] + 1 - self.already_shown_rho[i], 13), 0)
             else:
-                max_rho[i] = min(max_rho[i] + margin - self.already_shown_rho[i], 13)
+                max_rho[i] = max(min(max_rho[i] + margin - self.already_shown_rho[i], 13), 0)
+            # Ensure min <= max for each suit
+            if min_lho[i] > max_lho[i]:
+                min_lho[i] = max_lho[i]
+            if min_rho[i] > max_rho[i]:
+                min_rho[i] = max_rho[i]
 
 
         #if self.verbose:
@@ -293,9 +298,9 @@ class BGADLL:
         else:
             margin = self.models.pimc_margin_hcp_bad_samples
         self.lho_constraints.MinHCP = max(min_lho-margin-self.already_shown_hcp_lho, 0)
-        self.lho_constraints.MaxHCP = min(max_lho+margin-self.already_shown_hcp_lho, 37)
+        self.lho_constraints.MaxHCP = max(min(max_lho+margin-self.already_shown_hcp_lho, 37), 0)
         self.rho_constraints.MinHCP = max(min_rho-margin-self.already_shown_hcp_rho, 0)
-        self.rho_constraints.MaxHCP = min(max_rho+margin-self.already_shown_hcp_rho, 37)
+        self.rho_constraints.MaxHCP = max(min(max_rho+margin-self.already_shown_hcp_rho, 37), 0)
 
         # Cap HCP for opponents who passed in opening position
         if self.passed_lho and self.passed_hand_hcp_cap > 0:
@@ -304,6 +309,12 @@ class BGADLL:
         if self.passed_rho and self.passed_hand_hcp_cap > 0:
             cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_rho, 0)
             self.rho_constraints.MaxHCP = min(self.rho_constraints.MaxHCP, cap)
+
+        # Ensure min <= max for HCP
+        if self.lho_constraints.MinHCP > self.lho_constraints.MaxHCP:
+            self.lho_constraints.MinHCP = self.lho_constraints.MaxHCP
+        if self.rho_constraints.MinHCP > self.rho_constraints.MaxHCP:
+            self.rho_constraints.MinHCP = self.rho_constraints.MaxHCP
 
         if self.verbose:
             print("set_hcp_constraints")
@@ -318,33 +329,53 @@ class BGADLL:
             if suit == 0:
                 self.rho_constraints.MinSpades = max(0, self.rho_constraints.MinSpades - 1)
                 self.rho_constraints.MaxSpades = max(0, self.rho_constraints.MaxSpades - 1)
+                if self.rho_constraints.MinSpades > self.rho_constraints.MaxSpades:
+                    self.rho_constraints.MinSpades = self.rho_constraints.MaxSpades
             if suit == 1:
                 self.rho_constraints.MinHearts = max(0, self.rho_constraints.MinHearts - 1)
                 self.rho_constraints.MaxHearts = max(0, self.rho_constraints.MaxHearts - 1)
+                if self.rho_constraints.MinHearts > self.rho_constraints.MaxHearts:
+                    self.rho_constraints.MinHearts = self.rho_constraints.MaxHearts
             if suit == 2:
                 self.rho_constraints.MinDiamonds = max(0, self.rho_constraints.MinDiamonds - 1)
                 self.rho_constraints.MaxDiamonds = max(0, self.rho_constraints.MaxDiamonds - 1)
+                if self.rho_constraints.MinDiamonds > self.rho_constraints.MaxDiamonds:
+                    self.rho_constraints.MinDiamonds = self.rho_constraints.MaxDiamonds
             if suit == 3:
                 self.rho_constraints.MinClubs = max(0, self.rho_constraints.MinClubs - 1)
                 self.rho_constraints.MaxClubs = max(0, self.rho_constraints.MaxClubs - 1)
+                if self.rho_constraints.MinClubs > self.rho_constraints.MaxClubs:
+                    self.rho_constraints.MinClubs = self.rho_constraints.MaxClubs
             self.rho_constraints.MinHCP = max(0, self.rho_constraints.MinHCP - hcp)
             self.rho_constraints.MaxHCP = max(0, self.rho_constraints.MaxHCP - hcp)
+            if self.rho_constraints.MinHCP > self.rho_constraints.MaxHCP:
+                self.rho_constraints.MinHCP = self.rho_constraints.MaxHCP
         if (playedBy == 0):
             # Lefty
             if suit == 0:
                 self.lho_constraints.MinSpades = max(0, self.lho_constraints.MinSpades - 1)
                 self.lho_constraints.MaxSpades = max(0, self.lho_constraints.MaxSpades - 1)
+                if self.lho_constraints.MinSpades > self.lho_constraints.MaxSpades:
+                    self.lho_constraints.MinSpades = self.lho_constraints.MaxSpades
             if suit == 1:
                 self.lho_constraints.MinHearts = max(0, self.lho_constraints.MinHearts - 1)
                 self.lho_constraints.MaxHearts = max(0, self.lho_constraints.MaxHearts - 1)
+                if self.lho_constraints.MinHearts > self.lho_constraints.MaxHearts:
+                    self.lho_constraints.MinHearts = self.lho_constraints.MaxHearts
             if suit == 2:
                 self.lho_constraints.MinDiamonds = max(0, self.lho_constraints.MinDiamonds - 1)
                 self.lho_constraints.MaxDiamonds = max(0, self.lho_constraints.MaxDiamonds - 1)
+                if self.lho_constraints.MinDiamonds > self.lho_constraints.MaxDiamonds:
+                    self.lho_constraints.MinDiamonds = self.lho_constraints.MaxDiamonds
             if suit == 3:
                 self.lho_constraints.MinClubs = max(0, self.lho_constraints.MinClubs - 1)
                 self.lho_constraints.MaxClubs = max(0, self.lho_constraints.MaxClubs - 1)
+                if self.lho_constraints.MinClubs > self.lho_constraints.MaxClubs:
+                    self.lho_constraints.MinClubs = self.lho_constraints.MaxClubs
             self.lho_constraints.MinHCP = max(0, self.lho_constraints.MinHCP - hcp)
             self.lho_constraints.MaxHCP = max(0, self.lho_constraints.MaxHCP - hcp)
+            if self.lho_constraints.MinHCP > self.lho_constraints.MaxHCP:
+                self.lho_constraints.MinHCP = self.lho_constraints.MaxHCP
         if self.verbose:
             print("East (RHO)",self.rho_constraints.ToString())
             print("West (LHO)",self.lho_constraints.ToString())

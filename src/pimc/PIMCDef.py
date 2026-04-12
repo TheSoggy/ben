@@ -215,22 +215,27 @@ class BGADefDLL:
         for i in range(4):
             if min_declarer[i] >= 5:
                 min_declarer[i] = max(min_declarer[i] - margin_declarer - self.already_shown_declarer[i], 0)
-            else: 
+            else:
                 min_declarer[i] = max(min_declarer[i] - margin_declarer - self.already_shown_declarer[i], 0)
             if max_declarer[i] <= 2:
-                max_declarer[i] = min(max_declarer[i] + margin_declarer - self.already_shown_declarer[i], 13)
-            else: 
-                max_declarer[i] = min(max_declarer[i] + margin_declarer - self.already_shown_declarer[i], 13)
-            # If samples show 5-card+ we only reduce by 1 
+                max_declarer[i] = max(min(max_declarer[i] + margin_declarer - self.already_shown_declarer[i], 13), 0)
+            else:
+                max_declarer[i] = max(min(max_declarer[i] + margin_declarer - self.already_shown_declarer[i], 13), 0)
+            # If samples show 5-card+ we only reduce by 1
             if min_partner[i] >= 5:
                 min_partner[i] = max(min_partner[i] - margin_partner - self.already_shown_partner[i], 0)
-            else: 
+            else:
                 min_partner[i] = max(min_partner[i] - margin_partner - self.already_shown_partner[i], 0)
-            # If samples show 2-card- we only increase by 1 
+            # If samples show 2-card- we only increase by 1
             if max_partner[i] <= 2:
-                max_partner[i] = min(max_partner[i] + margin_partner - self.already_shown_partner[i], 13)
-            else: 
-                max_partner[i] = min(max_partner[i] + margin_partner - self.already_shown_partner[i], 13)
+                max_partner[i] = max(min(max_partner[i] + margin_partner - self.already_shown_partner[i], 13), 0)
+            else:
+                max_partner[i] = max(min(max_partner[i] + margin_partner - self.already_shown_partner[i], 13), 0)
+            # Ensure min <= max for each suit
+            if min_declarer[i] > max_declarer[i]:
+                min_declarer[i] = max_declarer[i]
+            if min_partner[i] > max_partner[i]:
+                min_partner[i] = max_partner[i]
 
 
         #if self.verbose:
@@ -272,9 +277,9 @@ class BGADefDLL:
         else:
             margin = self.models.pimc_margin_hcp_bad_samples
         self.declarer_constraints.MinHCP = max(min_declarer-margin-self.already_shown_hcp_declarer, 0)
-        self.declarer_constraints.MaxHCP = min(max_declarer+margin-self.already_shown_hcp_declarer, 37)
+        self.declarer_constraints.MaxHCP = max(min(max_declarer+margin-self.already_shown_hcp_declarer, 37), 0)
         self.partner_constraints.MinHCP = max(min_partner-margin-self.already_shown_hcp_partner, 0)
-        self.partner_constraints.MaxHCP = min(max_partner+margin-self.already_shown_hcp_partner, 37)
+        self.partner_constraints.MaxHCP = max(min(max_partner+margin-self.already_shown_hcp_partner, 37), 0)
 
         # Cap HCP for players who passed in opening position
         if self.passed_declarer and self.passed_hand_hcp_cap > 0:
@@ -283,6 +288,12 @@ class BGADefDLL:
         if self.passed_partner and self.passed_hand_hcp_cap > 0:
             cap = max(self.passed_hand_hcp_cap - self.already_shown_hcp_partner, 0)
             self.partner_constraints.MaxHCP = min(self.partner_constraints.MaxHCP, cap)
+
+        # Ensure min <= max for HCP
+        if self.declarer_constraints.MinHCP > self.declarer_constraints.MaxHCP:
+            self.declarer_constraints.MinHCP = self.declarer_constraints.MaxHCP
+        if self.partner_constraints.MinHCP > self.partner_constraints.MaxHCP:
+            self.partner_constraints.MinHCP = self.partner_constraints.MaxHCP
 
         if self.verbose:
             print("set_hcp_constraints")
@@ -297,37 +308,57 @@ class BGADefDLL:
         else:
             partner = 0
         if (playedBy == 3):
-            # Righty
+            # Declarer
             if suit == 0:
                 self.declarer_constraints.MinSpades = max(0, self.declarer_constraints.MinSpades - 1)
                 self.declarer_constraints.MaxSpades = max(0, self.declarer_constraints.MaxSpades - 1)
+                if self.declarer_constraints.MinSpades > self.declarer_constraints.MaxSpades:
+                    self.declarer_constraints.MinSpades = self.declarer_constraints.MaxSpades
             if suit == 1:
                 self.declarer_constraints.MinHearts = max(0, self.declarer_constraints.MinHearts - 1)
                 self.declarer_constraints.MaxHearts = max(0, self.declarer_constraints.MaxHearts - 1)
+                if self.declarer_constraints.MinHearts > self.declarer_constraints.MaxHearts:
+                    self.declarer_constraints.MinHearts = self.declarer_constraints.MaxHearts
             if suit == 2:
                 self.declarer_constraints.MinDiamonds = max(0, self.declarer_constraints.MinDiamonds - 1)
                 self.declarer_constraints.MaxDiamonds = max(0, self.declarer_constraints.MaxDiamonds - 1)
+                if self.declarer_constraints.MinDiamonds > self.declarer_constraints.MaxDiamonds:
+                    self.declarer_constraints.MinDiamonds = self.declarer_constraints.MaxDiamonds
             if suit == 3:
                 self.declarer_constraints.MinClubs = max(0, self.declarer_constraints.MinClubs - 1)
                 self.declarer_constraints.MaxClubs = max(0, self.declarer_constraints.MaxClubs - 1)
+                if self.declarer_constraints.MinClubs > self.declarer_constraints.MaxClubs:
+                    self.declarer_constraints.MinClubs = self.declarer_constraints.MaxClubs
             self.declarer_constraints.MinHCP = max(0, self.declarer_constraints.MinHCP - hcp)
             self.declarer_constraints.MaxHCP = max(0, self.declarer_constraints.MaxHCP - hcp)
+            if self.declarer_constraints.MinHCP > self.declarer_constraints.MaxHCP:
+                self.declarer_constraints.MinHCP = self.declarer_constraints.MaxHCP
         if (playedBy == partner):
-            # Lefty
+            # Partner
             if suit == 0:
                 self.partner_constraints.MinSpades = max(0, self.partner_constraints.MinSpades - 1)
                 self.partner_constraints.MaxSpades = max(0, self.partner_constraints.MaxSpades - 1)
+                if self.partner_constraints.MinSpades > self.partner_constraints.MaxSpades:
+                    self.partner_constraints.MinSpades = self.partner_constraints.MaxSpades
             if suit == 1:
                 self.partner_constraints.MinHearts = max(0, self.partner_constraints.MinHearts - 1)
                 self.partner_constraints.MaxHearts = max(0, self.partner_constraints.MaxHearts - 1)
+                if self.partner_constraints.MinHearts > self.partner_constraints.MaxHearts:
+                    self.partner_constraints.MinHearts = self.partner_constraints.MaxHearts
             if suit == 2:
                 self.partner_constraints.MinDiamonds = max(0, self.partner_constraints.MinDiamonds - 1)
                 self.partner_constraints.MaxDiamonds = max(0, self.partner_constraints.MaxDiamonds - 1)
+                if self.partner_constraints.MinDiamonds > self.partner_constraints.MaxDiamonds:
+                    self.partner_constraints.MinDiamonds = self.partner_constraints.MaxDiamonds
             if suit == 3:
                 self.partner_constraints.MinClubs = max(0, self.partner_constraints.MinClubs - 1)
                 self.partner_constraints.MaxClubs = max(0, self.partner_constraints.MaxClubs - 1)
+                if self.partner_constraints.MinClubs > self.partner_constraints.MaxClubs:
+                    self.partner_constraints.MinClubs = self.partner_constraints.MaxClubs
             self.partner_constraints.MinHCP = max(0, self.partner_constraints.MinHCP - hcp)
             self.partner_constraints.MaxHCP = max(0, self.partner_constraints.MaxHCP - hcp)
+            if self.partner_constraints.MinHCP > self.partner_constraints.MaxHCP:
+                self.partner_constraints.MinHCP = self.partner_constraints.MaxHCP
         if self.verbose:
             print("Declarer",self.declarer_constraints.ToString())
             print("Partner",self.partner_constraints.ToString())
