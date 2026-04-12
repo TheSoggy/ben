@@ -936,6 +936,10 @@ class CardPlayer:
                         adjust_card += round(insta_score * self.models.play_reward_threshold_NN_factor_MP,2)
                     else:
                         adjust_card += round(insta_score * self.models.play_reward_threshold_NN_factor_IMP,2)
+                # When sampling quality is low, boost NN influence since DD results are unreliable
+                if quality < self.models.pimc_bidding_quality and insta_score > 0.1:
+                    nn_boost = round(insta_score * 10, 2)
+                    adjust_card += nn_boost
             else:
                 # If we can take rest we don't adjust, then NN will decide if equal
                 # Another option could be to resample the hands without restrictions
@@ -1076,6 +1080,10 @@ class CardPlayer:
                         adjust_card += round(insta_score * self.models.play_reward_threshold_NN_factor_MP,2)
                     else:
                         adjust_card += round(insta_score * self.models.play_reward_threshold_NN_factor_IMP,2)
+                # When sampling quality is low, boost NN influence since DD results are unreliable
+                if quality < self.models.pimc_bidding_quality and insta_score > 0.1:
+                    nn_boost = round(insta_score * 10, 2)
+                    adjust_card += nn_boost
             else:
                 # If we can take rest we don't adjust, then NN will decide if equal
                 # Another option could be to resample the hands without restrictions
