@@ -7,14 +7,16 @@ import sys
 import json
 import ctypes
 
-# Bootstrap path so dds module can be found
+# Bootstrap path — import dds directly (not via ddsolver package to avoid circular import)
 import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.dirname(script_dir)
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
-from ddsolver import dds
+import dds
 
 
 def main():
