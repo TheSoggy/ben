@@ -1,6 +1,5 @@
 import sys
 import ctypes
-import signal
 from typing import Dict, List
 from collections import Counter
 from objects import Card
@@ -109,31 +108,49 @@ class DDSolver:
 
         return results 
 
+    _VALID_CARDS = set('AKQJT98765432')
+
     @staticmethod
     def _validate_pbn(pbn_str):
-        """Validate PBN deal string: 4 hands, each with exactly 4 suits (3 dots),
-        and total cards across all hands is divisible by 4."""
+        """Validate PBN deal for DDS: 4 hands, 4 suits each, valid cards,
+        no duplicate cards, and all hands have the same card count."""
         pbn = pbn_str
         if ':' in pbn:
             pbn = pbn.split(':', 1)[1]
         hands = pbn.strip().split(' ')
         if len(hands) != 4:
             return False
-        total_cards = 0
+
+        all_cards = set()
+        hand_counts = []
         for hand in hands:
-            if hand.count('.') != 3:
+            suits = hand.split('.')
+            if len(suits) != 4:
                 return False
-            total_cards += sum(1 for c in hand if c not in '. ')
-        # Total remaining cards must be divisible by 4 (or close, accounting for current trick)
-        # DDS requires valid card distribution
-        if total_cards == 0 or total_cards > 52:
+            count = 0
+            for suit_idx, suit_cards in enumerate(suits):
+                for c in suit_cards:
+                    if c not in DDSolver._VALID_CARDS:
+                        return False
+                    card_key = (suit_idx, c)
+                    if card_key in all_cards:
+                        return False  # Duplicate card
+                    all_cards.add(card_key)
+                    count += 1
+            hand_counts.append(count)
+
+        if not all_cards:
+            return False
+        # DDS requires all 4 hands to have equal card counts
+        # ("Sum X is not four" crash when hands are unbalanced)
+        if len(set(hand_counts)) != 1:
             return False
         return True
 
     def solve_helper(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
         card_rank = [0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200, 0x0100, 0x0080, 0x0040, 0x0020, 0x0010, 0x0008, 0x0004]
 
-        # Filter out invalid PBN deals to prevent DDS segfault
+        # Filter out invalid PBN deals to prevent DDS crash (C library aborts on bad input)
         valid_hands = [h for h in hands_pbn if self._validate_pbn(h)]
         if not valid_hands:
             print(f"{Fore.RED}All {len(hands_pbn)} PBN deals invalid, skipping DDS solve{Style.RESET_ALL}")
@@ -166,22 +183,7 @@ class DDSolver:
             bo.solutions[handno] = solutions
             bo.mode[handno] = self.dds_mode
 
-        # Install SIGSEGV handler to catch DDS crashes instead of killing the process
-        class DDSCrashError(Exception):
-            pass
-
-        def _segv_handler(signum, frame):
-            raise DDSCrashError("DDS segfault caught")
-
-        old_handler = signal.signal(signal.SIGSEGV, _segv_handler)
-        try:
-            res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
-        except DDSCrashError:
-            print(f"{Fore.RED}DDS segfault caught, hands: {hands_pbn[0][:80]}{Style.RESET_ALL}")
-            return None
-        finally:
-            signal.signal(signal.SIGSEGV, old_handler)
-
+        res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
         if res != 1:
             error_message = dds.get_error_message(res)
             print(f"{Fore.RED}Error Code: {res}, Error Message: {error_message} {hands_pbn[0].encode('utf-8')} {current_trick} {leader_i}{Style.RESET_ALL}")
