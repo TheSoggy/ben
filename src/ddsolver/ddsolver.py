@@ -1,11 +1,17 @@
 import sys
+import os
+import json
 import ctypes
+import subprocess
 from typing import Dict, List
 from collections import Counter
 from objects import Card
 from ddsolver import dds
 from colorama import Fore, Back, Style, init
 from nn.timing import ModelTimer
+
+_DDS_SUBPROCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dds_subprocess.py')
+_DDS_USE_SUBPROCESS = sys.platform == 'darwin'  # Only needed on macOS where DDS crashes
 
 init()
 
@@ -199,9 +205,67 @@ class DDSolver:
             bo.solutions[handno] = solutions
             bo.mode[handno] = self.dds_mode
 
-        # Log first PBN before DDS call — flush so it's visible even if DDS crashes
-        sys.stderr.write(f"DDS solve: {bo.noOfBoards} boards, trick={current_trick}, leader={leader_i}, pbn[0]={hands_pbn[0][:80]}\n")
-        sys.stderr.flush()
+        if _DDS_USE_SUBPROCESS:
+            # Run DDS in subprocess to isolate crashes on macOS
+            sub_data = {
+                'noOfBoards': bo.noOfBoards,
+                'deals': []
+            }
+            for handno in range(bo.noOfBoards):
+                sub_data['deals'].append({
+                    'trump': bo.deals[handno].trump,
+                    'first': bo.deals[handno].first,
+                    'currentTrickSuit': [bo.deals[handno].currentTrickSuit[i] for i in range(3)],
+                    'currentTrickRank': [bo.deals[handno].currentTrickRank[i] for i in range(3)],
+                    'remainCards': hands_pbn[handno],
+                    'target': bo.target[handno],
+                    'solutions': bo.solutions[handno],
+                    'mode': bo.mode[handno]
+                })
+
+            try:
+                proc = subprocess.run(
+                    [sys.executable, _DDS_SUBPROCESS],
+                    input=json.dumps(sub_data),
+                    capture_output=True, text=True, timeout=30
+                )
+            except subprocess.TimeoutExpired:
+                print(f"{Fore.RED}DDS subprocess timed out{Style.RESET_ALL}")
+                return None
+
+            if proc.returncode != 0:
+                print(f"{Fore.RED}DDS subprocess crashed (rc={proc.returncode}), pbn[0]={hands_pbn[0][:80]}{Style.RESET_ALL}")
+                return None
+
+            try:
+                result = json.loads(proc.stdout)
+            except (json.JSONDecodeError, ValueError):
+                print(f"{Fore.RED}DDS subprocess bad output: {proc.stdout[:200]}{Style.RESET_ALL}")
+                return None
+
+            if result.get('error'):
+                print(f"{Fore.RED}DDS Error: {result.get('code')} {result.get('message')} {hands_pbn[0][:60]}{Style.RESET_ALL}")
+                return None
+
+            if result['type'] == 'solutions1':
+                card_results = {'max': result['max'], 'min': result['min']}
+            else:
+                card_results = {}
+                for handno, board_cards in enumerate(result['boards']):
+                    for card_data in board_cards:
+                        suit_i = card_data['suit']
+                        card = suit_i * 13 + 14 - card_data['rank']
+                        if card not in card_results:
+                            card_results[card] = []
+                        card_results[card].append(card_data['score'])
+                        eq_cards_encoded = card_data['equals']
+                        for k, rank_code in enumerate(card_rank):
+                            if rank_code & eq_cards_encoded > 0:
+                                eq_card = suit_i * 13 + k
+                                if eq_card not in card_results:
+                                    card_results[eq_card] = []
+                                card_results[eq_card].append(card_data['score'])
+            return card_results
 
         res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
         if res != 1:
