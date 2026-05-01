@@ -72,7 +72,7 @@ from werkzeug.exceptions import HTTPException
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from nn.timing import ModelTimer
 
 # Intil fixed in Keras, this is needed to remove a wrong warning
@@ -727,9 +727,15 @@ limiter = Limiter(
                                # For production with multiple workers, use Redis or Memcached:
                                # "redis://localhost:6379"
 )
-# Initialize the lock
+# Concurrency for inference. /bid stays serialized — bidder is short and
+# sharing state across green-threads is cheap. /play wraps a heavier code
+# path (TF + DDS rollouts + sometimes PIMC/ACE .NET); allowing 2 in flight
+# at once keeps gevent connections from queuing 50-deep behind one slow
+# call. BBA/PIMC/ACE all have their own internal locks where they need
+# them — we're only relaxing the umbrella mutex.
 model_lock_bid = Lock()
-model_lock_play = Lock()
+_BEN_PLAY_CONCURRENCY = int(os.environ.get("BEN_PLAY_CONCURRENCY", "2"))
+model_lock_play = BoundedSemaphore(_BEN_PLAY_CONCURRENCY)
 # Set up logging
 class PrefixedTimedRotatingFileHandler(TimedRotatingFileHandler):
     def __init__(self, prefix, when='midnight', interval=1, backupCount=0):
