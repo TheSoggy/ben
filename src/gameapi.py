@@ -606,16 +606,6 @@ if verbose:
     print("Loading sampler")
 sampler = Sample.from_conf(configuration, verbose)
 
-# PIMC/ACE use .NET assemblies via pythonnet — works on macOS/Linux with CoreCLR
-# Only disable if pythonnet/clr is not available at all
-try:
-    import clr
-    print("pythonnet available — PIMC/ACE enabled")
-except ImportError:
-    print("pythonnet not available — disabling PIMC")
-    models.pimc_use_declaring = False
-    models.pimc_use_defending = False
-
 if models.use_bba:
     print("Using BBA for bidding")
 else:
@@ -630,57 +620,104 @@ if models.matchpoint:
 else:
     print("Playing IMPS mode")
 
-if models.use_bba or models.use_bba_to_count_aces or models.consult_bba or models.use_bba_rollout:
-    from bba.BBA import BBABotBid
-    try:
-        bot = BBABotBid(None, None, None, None, None, None, None, None)
-        print(f"BBA enabled. Version {bot.version()}")
-    except Exception as e:
-        print(f"BBA init failed ({e}), disabling BBA — falling back to neural network bidding")
-        models.use_bba = False
-        models.use_bba_to_count_aces = False
-        models.consult_bba = False
-        models.use_bba_rollout = False
 
-if models.use_suitc:
-    try:
-        from suitc.SuitC import SuitCLib
-        suitc = SuitCLib(verbose)
-        print(f"SuitC enabled. Version {suitc.version()}")
-    except Exception as e:
-        print(f"SuitC init failed: {e}")
-        models.use_suitc = False
+# .NET CLR + native-engine initialization is not fork-safe. pythonnet's
+# .NET runtime gets into a corrupt state when forked from a parent that
+# already loaded it (BBA's finalizers segfault during GC in the child),
+# which is why we historically ran with preload_app=False at the cost of
+# duplicated TF model memory in every worker.
+#
+# Solution: defer all .NET-touching imports + initialization into this
+# function and call it from gunicorn's post_fork hook. With preload_app=
+# True, TF models load once in the master and CoW into workers; .NET
+# loads independently in each worker after fork — best of both.
+#
+# When BEN_DEFER_NATIVE_INIT=1 is set (gunicorn does this), module load
+# skips this and waits for post_fork to invoke it. Otherwise (running
+# under a plain `python gameapi.py` or with preload_app=False) it runs
+# at module load as before. Idempotent: calling it twice is a no-op.
+_native_initialized = False
 
-if models.pimc_use_declaring or models.pimc_use_defending:
+
+def _init_native_engines():
+    """Initialize .NET-backed bridge engines (BBA, SuitC, PIMC, ACE).
+
+    Must run AFTER fork when used under gunicorn with preload_app=True.
+    Idempotent — safe to call multiple times.
+    """
+    global _native_initialized
+    if _native_initialized:
+        return
+
+    # Probe pythonnet first; if it's missing, all .NET engines stay off.
     try:
-        from pimc.PIMC import BGADLL
-        from pimc.PIMCDef import BGADefDLL
-        if BGADLL.get_dll() is not None:
-            pimc = BGADLL(None, None, None, None, None, None, None)
-            pimcdef = BGADefDLL(None, None, None, None, None, None, None, None)
-            print(f"PIMC enabled. Version {pimc.version()} DDS: {pimc.dds_backend()}")
-            print(f"PIMCDef enabled. Version {pimcdef.version()}")
-        else:
-            print("PIMC/PIMCDef disabled (BGADLL not available for this platform)")
-            models.pimc_use_declaring = False
-            models.pimc_use_defending = False
-    except Exception as e:
-        print(f"PIMC/PIMCDef init failed: {e}")
+        import clr  # noqa: F401
+        print("pythonnet available — PIMC/ACE enabled")
+    except ImportError:
+        print("pythonnet not available — disabling PIMC/ACE")
         models.pimc_use_declaring = False
         models.pimc_use_defending = False
 
-if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False):
-    try:
-        from ace.ACE import ACEDLL
-        ace = ACEDLL(None, None, None, None, None, None, None)
-        from ace.ACEDef import ACEDefDLL
-        acedef = ACEDefDLL(None, None, None, None, None, None, None, None)
-        print(f"ACE enabled. Version {ace.version()}")
-        print(f"ACEDef enabled. Version {acedef.version()}")
-    except (Exception, SystemExit) as e:
-        print(f"ACE init failed: {e} — disabling ACE, falling back to PIMC/NN")
-        models.ace_use_declaring = False
-        models.ace_use_defending = False
+    if models.use_bba or models.use_bba_to_count_aces or models.consult_bba or models.use_bba_rollout:
+        from bba.BBA import BBABotBid
+        try:
+            bot = BBABotBid(None, None, None, None, None, None, None, None)
+            print(f"BBA enabled. Version {bot.version()}")
+        except Exception as e:
+            print(f"BBA init failed ({e}), disabling BBA — falling back to neural network bidding")
+            models.use_bba = False
+            models.use_bba_to_count_aces = False
+            models.consult_bba = False
+            models.use_bba_rollout = False
+
+    if models.use_suitc:
+        try:
+            from suitc.SuitC import SuitCLib
+            suitc = SuitCLib(verbose)
+            print(f"SuitC enabled. Version {suitc.version()}")
+        except Exception as e:
+            print(f"SuitC init failed: {e}")
+            models.use_suitc = False
+
+    if models.pimc_use_declaring or models.pimc_use_defending:
+        try:
+            from pimc.PIMC import BGADLL
+            from pimc.PIMCDef import BGADefDLL
+            if BGADLL.get_dll() is not None:
+                pimc = BGADLL(None, None, None, None, None, None, None)
+                pimcdef = BGADefDLL(None, None, None, None, None, None, None, None)
+                print(f"PIMC enabled. Version {pimc.version()} DDS: {pimc.dds_backend()}")
+                print(f"PIMCDef enabled. Version {pimcdef.version()}")
+            else:
+                print("PIMC/PIMCDef disabled (BGADLL not available for this platform)")
+                models.pimc_use_declaring = False
+                models.pimc_use_defending = False
+        except Exception as e:
+            print(f"PIMC/PIMCDef init failed: {e}")
+            models.pimc_use_declaring = False
+            models.pimc_use_defending = False
+
+    if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False):
+        try:
+            from ace.ACE import ACEDLL
+            ace = ACEDLL(None, None, None, None, None, None, None)
+            from ace.ACEDef import ACEDefDLL
+            acedef = ACEDefDLL(None, None, None, None, None, None, None, None)
+            print(f"ACE enabled. Version {ace.version()}")
+            print(f"ACEDef enabled. Version {acedef.version()}")
+        except (Exception, SystemExit) as e:
+            print(f"ACE init failed: {e} — disabling ACE, falling back to PIMC/NN")
+            models.ace_use_declaring = False
+            models.ace_use_defending = False
+
+    _native_initialized = True
+
+
+# Plain `python gameapi.py` and gunicorn-with-preload_app=False both want
+# native engines initialized at module load. When gunicorn sets the
+# defer env var, we wait for post_fork to call us instead.
+if not os.environ.get("BEN_DEFER_NATIVE_INIT"):
+    _init_native_engines()
 
 from ddsolver.ddssolver import DDSSolver
 dds_max_threads = configuration.getint('dds', 'dds_max_threads', fallback=0)
