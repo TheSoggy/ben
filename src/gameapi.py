@@ -74,7 +74,7 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from threading import BoundedSemaphore, Lock
 
-from observability import lock_timed
+from observability import BEN_PLAY_PHASE, lock_timed, phase_timed
 from nn.timing import ModelTimer
 
 # Intil fixed in Keras, this is needed to remove a wrong warning
@@ -121,8 +121,20 @@ def get_execution_path():
     # Get the directory where the program is started from either PyInstaller executable or the script
     return os.getcwd()
 
-def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strain_i, decl_i, auction, play, cardplayer_i, claim, features, verbose):
-    
+
+def _record_phase(phase, elapsed, timings):
+    """Record a single phase observation to the histogram and (optionally) a per-request dict."""
+    BEN_PLAY_PHASE.labels(phase=phase).observe(elapsed)
+    if timings is not None:
+        timings[phase] = timings.get(phase, 0.0) + elapsed
+
+
+def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strain_i, decl_i, auction, play, cardplayer_i, claim, features, verbose, timings=None):
+    # `timings` is an optional dict — when provided, per-phase elapsed
+    # seconds are accumulated under fixed keys (engine_init,
+    # card_player_init, sampling, play_card) so the caller can log a
+    # single structured line per request. Phase histograms are emitted
+    # unconditionally to Prometheus regardless.
     level = int(contract[0])
     is_decl_vuln = [vuln_ns, vuln_ew, vuln_ns, vuln_ew][decl_i]
 
@@ -138,6 +150,7 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
     ace_use_defending = getattr(models, 'ace_use_defending', False)
 
     # We should only instantiate the play engine for the position we are playing
+    _phase_t0 = time.monotonic()
     if ace_use_declaring and cardplayer_i == 3 and ACEDLL is not None:
         declarer = ACEDLL(models, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, verbose)
         pimc[1] = declarer
@@ -178,13 +191,16 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
             print("PIMC", dummy_hand_str, lefty_hand_str, righty_hand_str, contract)
     else:
         pimc[2] = None
+    _record_phase("engine_init", time.monotonic() - _phase_t0, timings)
 
+    _phase_t0 = time.monotonic()
     card_players = [
         CardPlayer(models, 0, lefty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[0], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
         CardPlayer(models, 1, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, pimc[1], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
         CardPlayer(models, 2, righty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[2], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
         CardPlayer(models, 3, decl_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[3], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i)
     ]
+    _record_phase("card_player_init", time.monotonic() - _phase_t0, timings)
 
     # Clear sample cache at start of new hand
     sampler.clear_sample_cache()
@@ -303,12 +319,16 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
                         return card_resp, player_i, play_status
                 played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
                 # No obvious play, so we roll out
+                _phase_t0 = time.monotonic()
                 rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = sampler.init_rollout_states(trick_i, player_i, card_players, played_cards, player_cards_played, shown_out_suits, discards, features["aceking"], current_trick, opening_lead52, auction, card_players[player_i].hand_str, card_players[player_i].public_hand_str, [vuln_ns, vuln_ew], models, card_players[player_i].get_random_generator())
+                _record_phase("sampling", time.monotonic() - _phase_t0, timings)
                 assert rollout_states[0].shape[0] > 0, "No samples for DDSolver"
-                
+
                 card_players[player_i].check_pimc_constraints(trick_i, rollout_states, quality)
 
+                _phase_t0 = time.monotonic()
                 card_resp =  card_players[player_i].play_card(trick_i, leader_i, current_trick52, tricks52, rollout_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features)
+                _record_phase("play_card", time.monotonic() - _phase_t0, timings)
 
                 card_resp.hcp = c_hcp
                 card_resp.shape = c_shp
@@ -1185,26 +1205,34 @@ def play():
         request_verbose = request.args.get("verbose", "").lower() in ("true", "1", "yes")
         effective_verbose = verbose or request_verbose
 
+        # Per-request phase timings — accumulated by `play_api` and the
+        # BBA aceking block below, then logged as a single structured
+        # line at the end of the handler.
+        timings = {}
+
         # Find ace and kings, when defending
         # Find ace and kings
         features = {}
         aceking = {}
         if models.use_bba_to_count_aces:
-            from bba.BBA import BBABotBid
-            bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
-            aceking = bba_bot.find_aces(auction)
-            features["aceking"] = aceking
-            #bba_bot.get_sample(auction)
-            bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
-            explanation, _, preempted = bba_bot.explain_auction(auction)
-            features["Explanation"] = explanation
-            features["preempted"] = preempted
+            with phase_timed("bba_aceking", timings):
+                from bba.BBA import BBABotBid
+                bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
+                aceking = bba_bot.find_aces(auction)
+                features["aceking"] = aceking
+                #bba_bot.get_sample(auction)
+                bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
+                explanation, _, preempted = bba_bot.explain_auction(auction)
+                features["Explanation"] = explanation
+                features["preempted"] = preempted
         else:
             features["aceking"] = aceking
 
         # Play
+        _phase_t0 = time.monotonic()
         with lock_timed(model_lock_play, "play"):
-            card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, False, features, effective_verbose)
+            timings["lock_wait"] = time.monotonic() - _phase_t0
+            card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, False, features, effective_verbose, timings=timings)
         print("Playing:", card_resp.card.symbol(), msg)
         result = card_resp.to_dict()
         if not details:
@@ -1215,10 +1243,13 @@ def play():
         result["player"] = cardplayer
         result["matchpoint"] = mp
         result["MP_or_IMP"] = models.use_real_imp_or_mp
-        if record: 
+        if record:
             calculations = {"hand":hand_str, "dummy":dummy_str, "vuln":vuln, "dealer":dealer, "seat":seat, "auction":auction, "play":result}
             logger.info(f"Calculations play: {json.dumps(calculations)}")
-        print(f'Request took {(time.time() - t_start):0.2f} seconds')       
+        total_s = time.time() - t_start
+        breakdown = " ".join(f"{k}={v:.3f}" for k, v in sorted(timings.items()))
+        logger.info(f"play.timings total={total_s:.3f} {breakdown} cards_played={len(cards)}")
+        print(f'Request took {total_s:0.2f} seconds [{breakdown}]')
         return json.dumps(result)
     except Exception as e:
         print(e)

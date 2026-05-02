@@ -60,6 +60,24 @@ _REQUEST_BUCKETS_SECONDS = (
     30.0,
 )
 
+# Phase buckets bracket sub-second NN inference up through multi-second
+# PIMC waits. Slightly wider than lock buckets so a single 3 s pimc_wait
+# lands in its own bucket rather than the overflow.
+_PHASE_BUCKETS_SECONDS = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    3.0,
+    5.0,
+    10.0,
+)
+
 # --- Collectors -------------------------------------------------------------
 
 BEN_LOCK_WAIT = Histogram(
@@ -93,6 +111,13 @@ BEN_LOCK_ACQUISITIONS = Counter(
     "ben_lock_acquisitions_total",
     "Total successful acquisitions of a model lock.",
     labelnames=("lock",),
+)
+
+BEN_PLAY_PHASE = Histogram(
+    "ben_play_phase_seconds",
+    "Time spent in a named phase of a /play (or /claim) request body.",
+    labelnames=("phase",),
+    buckets=_PHASE_BUCKETS_SECONDS,
 )
 
 
@@ -157,6 +182,29 @@ def request_timed(endpoint: str) -> Iterator["RequestObservation"]:
         BEN_REQUEST.labels(endpoint=endpoint, outcome=obs.outcome).observe(
             monotonic() - start
         )
+
+
+@contextmanager
+def phase_timed(phase: str, timings: dict | None = None) -> Iterator[None]:
+    """Record elapsed time for a named phase inside a request body.
+
+    Always observes ``ben_play_phase_seconds{phase=phase}``. If a
+    ``timings`` dict is supplied, the elapsed seconds are also stored
+    under that key (added if the key already exists, so a phase that
+    wraps a per-trick loop accumulates correctly). The dict can then
+    be logged as a single structured line per request, giving a
+    per-call breakdown alongside the aggregate Prometheus view.
+    """
+    from time import monotonic
+
+    start = monotonic()
+    try:
+        yield
+    finally:
+        elapsed = monotonic() - start
+        BEN_PLAY_PHASE.labels(phase=phase).observe(elapsed)
+        if timings is not None:
+            timings[phase] = timings.get(phase, 0.0) + elapsed
 
 
 class RequestObservation:
