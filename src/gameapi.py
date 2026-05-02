@@ -72,7 +72,9 @@ from werkzeug.exceptions import HTTPException
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
-from threading import Lock
+from threading import BoundedSemaphore, Lock
+
+from observability import BEN_PLAY_PHASE, lock_timed, phase_timed
 from nn.timing import ModelTimer
 
 # Intil fixed in Keras, this is needed to remove a wrong warning
@@ -119,8 +121,20 @@ def get_execution_path():
     # Get the directory where the program is started from either PyInstaller executable or the script
     return os.getcwd()
 
-def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strain_i, decl_i, auction, play, cardplayer_i, claim, features, verbose):
-    
+
+def _record_phase(phase, elapsed, timings):
+    """Record a single phase observation to the histogram and (optionally) a per-request dict."""
+    BEN_PLAY_PHASE.labels(phase=phase).observe(elapsed)
+    if timings is not None:
+        timings[phase] = timings.get(phase, 0.0) + elapsed
+
+
+def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strain_i, decl_i, auction, play, cardplayer_i, claim, features, verbose, timings=None):
+    # `timings` is an optional dict — when provided, per-phase elapsed
+    # seconds are accumulated under fixed keys (engine_init,
+    # card_player_init, sampling, play_card) so the caller can log a
+    # single structured line per request. Phase histograms are emitted
+    # unconditionally to Prometheus regardless.
     level = int(contract[0])
     is_decl_vuln = [vuln_ns, vuln_ew, vuln_ns, vuln_ew][decl_i]
 
@@ -136,6 +150,7 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
     ace_use_defending = getattr(models, 'ace_use_defending', False)
 
     # We should only instantiate the play engine for the position we are playing
+    _phase_t0 = time.monotonic()
     if ace_use_declaring and cardplayer_i == 3 and ACEDLL is not None:
         declarer = ACEDLL(models, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, verbose)
         pimc[1] = declarer
@@ -176,13 +191,16 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
             print("PIMC", dummy_hand_str, lefty_hand_str, righty_hand_str, contract)
     else:
         pimc[2] = None
+    _record_phase("engine_init", time.monotonic() - _phase_t0, timings)
 
+    _phase_t0 = time.monotonic()
     card_players = [
         CardPlayer(models, 0, lefty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[0], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
         CardPlayer(models, 1, dummy_hand_str, decl_hand_str, contract, is_decl_vuln, sampler, pimc[1], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
         CardPlayer(models, 2, righty_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[2], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i),
         CardPlayer(models, 3, decl_hand_str, dummy_hand_str, contract, is_decl_vuln, sampler, pimc[3], dds, verbose, auction=auction, dealer_i=dealer_i, decl_i=decl_i)
     ]
+    _record_phase("card_player_init", time.monotonic() - _phase_t0, timings)
 
     # Clear sample cache at start of new hand
     sampler.clear_sample_cache()
@@ -301,12 +319,16 @@ def play_api(dealer_i, vuln_ns, vuln_ew, hands, models, sampler, contract, strai
                         return card_resp, player_i, play_status
                 played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
                 # No obvious play, so we roll out
+                _phase_t0 = time.monotonic()
                 rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = sampler.init_rollout_states(trick_i, player_i, card_players, played_cards, player_cards_played, shown_out_suits, discards, features["aceking"], current_trick, opening_lead52, auction, card_players[player_i].hand_str, card_players[player_i].public_hand_str, [vuln_ns, vuln_ew], models, card_players[player_i].get_random_generator())
+                _record_phase("sampling", time.monotonic() - _phase_t0, timings)
                 assert rollout_states[0].shape[0] > 0, "No samples for DDSolver"
-                
+
                 card_players[player_i].check_pimc_constraints(trick_i, rollout_states, quality)
 
+                _phase_t0 = time.monotonic()
                 card_resp =  card_players[player_i].play_card(trick_i, leader_i, current_trick52, tricks52, rollout_states, worlds, bidding_scores, quality, probability_of_occurence, shown_out_suits, play_status, lead_scores, play_scores, logical_play_scores, discard_scores, features)
+                _record_phase("play_card", time.monotonic() - _phase_t0, timings)
 
                 card_resp.hcp = c_hcp
                 card_resp.shape = c_shp
@@ -729,7 +751,22 @@ limiter = Limiter(
 )
 # Initialize the lock
 model_lock_bid = Lock()
-model_lock_play = Lock()
+
+# /play uses a BoundedSemaphore instead of a plain Lock so multiple TF
+# inferences can run concurrently within a single gunicorn worker. This
+# was previously unsafe — concurrent first-calls to a @tf.function race
+# on the trace cache and corrupt state (the failure mode that killed
+# PR #75's `BoundedSemaphore(2)` experiment). It is now safe because
+# `gunicorn.conf.py:post_worker_init` calls `Models.warm_up()` once per
+# worker after fork, populating every trace before any real request
+# arrives. Concurrent calls hit the cached ConcreteFunction.
+#
+# Tunable via BEN_PLAY_CONCURRENCY (default 2). Set to 1 to revert to
+# Lock-equivalent serialization without redeploying — the BoundedSemaphore
+# raises ValueError on over-release, surfacing acquire/release mistakes
+# that a plain Semaphore would silently swallow.
+_play_concurrency = max(1, int(os.environ.get("BEN_PLAY_CONCURRENCY", "2")))
+model_lock_play = BoundedSemaphore(_play_concurrency)
 # Set up logging
 class PrefixedTimedRotatingFileHandler(TimedRotatingFileHandler):
     def __init__(self, prefix, when='midnight', interval=1, backupCount=0):
@@ -877,6 +914,20 @@ def home():
     html = '<h1><a href="/">Play Now</a></h1>\n'
     return html
 
+
+@app.route('/metrics')
+@limiter.exempt
+def metrics():
+    """Prometheus exposition for the collectors defined in observability.py.
+
+    Internal Docker network only — Ben never publishes 8085 publicly in
+    any environment we run. If that ever changes, gate this route with
+    Flask middleware.
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
 @app.route('/bid')
 def bid():
     try:
@@ -929,7 +980,7 @@ def bid():
             hint_bot = BotBid(vuln, hand, models, sampler, position_i, dealer_i, dds, False, verbose)
             explanations, bba_controlled, preempted = hint_bot.explain_auction(auction)
             hint_bot.bba_is_controlling = bba_controlled
-        with model_lock_bid:
+        with lock_timed(model_lock_bid, "bid"):
             bid = hint_bot.bid(auction)
 
         result = bid.to_dict()
@@ -1025,7 +1076,7 @@ def lead():
                 bba_bot.get_sample(auction)
 
         hint_bot = BotLead(vuln, hand, models, sampler, position, dealer_i, dds, effective_verbose)
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             card_resp = hint_bot.find_opening_lead(auction, aceking)
         user = request.args.get("user")
         #card_resp.who = user
@@ -1154,26 +1205,34 @@ def play():
         request_verbose = request.args.get("verbose", "").lower() in ("true", "1", "yes")
         effective_verbose = verbose or request_verbose
 
+        # Per-request phase timings — accumulated by `play_api` and the
+        # BBA aceking block below, then logged as a single structured
+        # line at the end of the handler.
+        timings = {}
+
         # Find ace and kings, when defending
         # Find ace and kings
         features = {}
         aceking = {}
         if models.use_bba_to_count_aces:
-            from bba.BBA import BBABotBid
-            bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
-            aceking = bba_bot.find_aces(auction)
-            features["aceking"] = aceking
-            #bba_bot.get_sample(auction)
-            bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
-            explanation, _, preempted = bba_bot.explain_auction(auction)
-            features["Explanation"] = explanation
-            features["preempted"] = preempted
+            with phase_timed("bba_aceking", timings):
+                from bba.BBA import BBABotBid
+                bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
+                aceking = bba_bot.find_aces(auction)
+                features["aceking"] = aceking
+                #bba_bot.get_sample(auction)
+                bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, models.matchpoint, effective_verbose)
+                explanation, _, preempted = bba_bot.explain_auction(auction)
+                features["Explanation"] = explanation
+                features["preempted"] = preempted
         else:
             features["aceking"] = aceking
 
         # Play
-        with model_lock_play:
-            card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, False, features, effective_verbose)
+        _phase_t0 = time.monotonic()
+        with lock_timed(model_lock_play, "play"):
+            timings["lock_wait"] = time.monotonic() - _phase_t0
+            card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, False, features, effective_verbose, timings=timings)
         print("Playing:", card_resp.card.symbol(), msg)
         result = card_resp.to_dict()
         if not details:
@@ -1184,10 +1243,13 @@ def play():
         result["player"] = cardplayer
         result["matchpoint"] = mp
         result["MP_or_IMP"] = models.use_real_imp_or_mp
-        if record: 
+        if record:
             calculations = {"hand":hand_str, "dummy":dummy_str, "vuln":vuln, "dealer":dealer, "seat":seat, "auction":auction, "play":result}
             logger.info(f"Calculations play: {json.dumps(calculations)}")
-        print(f'Request took {(time.time() - t_start):0.2f} seconds')       
+        total_s = time.time() - t_start
+        breakdown = " ".join(f"{k}={v:.3f}" for k, v in sorted(timings.items()))
+        logger.info(f"play.timings total={total_s:.3f} {breakdown} cards_played={len(cards)}")
+        print(f'Request took {total_s:0.2f} seconds [{breakdown}]')
         return json.dumps(result)
     except Exception as e:
         print(e)
@@ -1272,7 +1334,7 @@ def cuebid():
         hint_bot = BotBid(vuln, hand, models, sampler, position_i, dealer_i, dds, False, verbose)
         explanations, bba_controlled, preempted = hint_bot.explain_auction(auction, dealer_i)
         hint_bot.bba_is_controlling = bba_controlled
-    with model_lock_bid:
+    with lock_timed(model_lock_bid, "bid"):
         bid = hint_bot.bid(auction)
     result = bid.to_dict()
     explanation = ""
@@ -1422,7 +1484,7 @@ def contract():
         position_i = dealer_enum[seat]
         X = get_binary_contract(position_i, vuln, hand_str, dummy_str, models.n_cards_bidding)
         result = {}
-        with model_lock_bid:
+        with lock_timed(model_lock_bid, "bid"):
             if verbose:
                 print(position_i, vuln, hand_str, dummy_str)
                 print(X)
@@ -1546,7 +1608,7 @@ def claim():
         # Find ace and kings, when defending
         aceking = {}
 
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, claim, aceking, verbose)
         result["result"] = msg
         if record: 
@@ -1824,7 +1886,7 @@ def autoplay():
                     except Exception as e:
                         print(f"[Autoplay] Failed to initialize bbabot: {e}")
 
-                with model_lock_bid:
+                with lock_timed(model_lock_bid, "bid"):
                     bid_resp = hint_bot.bid(auction)
 
                 bid = bid_resp.bid
@@ -1957,7 +2019,7 @@ def autoplay():
             bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, leader_nesw, hands[leader_nesw], vuln, dealer_i, models.matchpoint, False)
             aceking = bba_bot.find_aces(auction)
 
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             lead_bot = BotLead(vuln, hands[leader_nesw], models, sampler, leader_nesw, dealer_i, dds, False)
             lead_resp = lead_bot.find_opening_lead(auction, aceking)
 
@@ -2087,7 +2149,7 @@ def autoplay():
                 played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
 
                 try:
-                    with model_lock_play:
+                    with lock_timed(model_lock_play, "play"):
                         rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = sampler.init_rollout_states(
                             trick_i, cardplayer_i, card_players, played_cards, player_cards_played,
                             shown_out_suits, discards, features["aceking"], current_trick, opening_lead,

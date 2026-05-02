@@ -25,3 +25,4 @@ flask_limiter
 gunicorn[gevent]
 psutil==5.9.0
 colorama
+prometheus_client>=0.20.0

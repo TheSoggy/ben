@@ -33,3 +33,42 @@ loglevel = "info"
 
 # --- Process naming ---
 proc_name = "ben-bridge-ai"
+
+
+# --- Hooks ---
+def post_worker_init(worker):
+    """Warm up every TF predictor immediately after the worker forks.
+
+    Concurrent first-calls to ``@tf.function`` race on the trace cache and
+    corrupted state in the reverted ``BoundedSemaphore(2)`` experiment. The
+    fix is to populate every trace once per worker process before any real
+    request arrives. After this call, ``model_lock_play`` can in principle
+    be relaxed because no further tracing happens on the hot path.
+
+    Failures here downgrade to warnings rather than aborting boot — a
+    partial warmup is still better than a worker that refuses to start.
+    Set ``BEN_DISABLE_WARMUP=1`` to bypass entirely (debug only).
+    """
+    import os as _os
+
+    if _os.environ.get("BEN_DISABLE_WARMUP") == "1":
+        worker.log.info("ben warmup: disabled via BEN_DISABLE_WARMUP")
+        return
+
+    try:
+        import gameapi as _gameapi
+    except Exception as exc:  # noqa: BLE001
+        worker.log.exception("ben warmup: gameapi import failed (%s)", exc)
+        return
+
+    models = getattr(_gameapi, "models", None)
+    if models is None or not hasattr(models, "warm_up"):
+        worker.log.warning("ben warmup: gameapi.models has no warm_up()")
+        return
+
+    worker.log.info("ben warmup: starting TF tracing warmup")
+    try:
+        models.warm_up()
+        worker.log.info("ben warmup: complete")
+    except Exception as exc:  # noqa: BLE001
+        worker.log.exception("ben warmup: failed mid-flight (%s)", exc)
