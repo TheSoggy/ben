@@ -241,19 +241,106 @@ class Models:
         self.reward_lead_partner_suit = reward_lead_partner_suit
         self.trump_lead_penalty = trump_lead_penalty
 
-    def warm_up(self):
-        """Run dummy predictions to trigger TensorFlow JIT compilation for player models."""
+    def warm_up(self) -> None:
+        """Trigger ``@tf.function`` tracing for every neural-net predictor.
+
+        Concurrent first-calls to a ``@tf.function`` can race on the trace
+        cache and corrupt state — this is why ``model_lock_play`` exists and
+        why relaxing it (``BoundedSemaphore(2)`` in the reverted PR) broke
+        ``/play`` immediately. After warmup every ``@tf.function`` has at
+        least one ``ConcreteFunction`` in its cache; subsequent calls of
+        any matching shape hit that cache without retracing, and concurrent
+        calls share the same compiled graph.
+
+        Call once per worker process after model load (typically from
+        gunicorn's ``post_worker_init`` hook). Logs each predictor; failures
+        downgrade to a warning rather than aborting boot — better to start
+        with a partial warmup than to refuse to serve.
+        """
+        import logging
+
         import numpy as np
 
-        # Only warm up player models - they have consistent 298-feature input
-        # and are called most frequently during card play
+        log = logging.getLogger(__name__)
+        f16 = np.float16
+
+        def _safe(label: str, fn) -> None:
+            try:
+                fn()
+                log.info("ben warmup: %s ok", label)
+            except Exception as exc:  # noqa: BLE001 — boot must not abort
+                log.warning("ben warmup: %s skipped (%s)", label, exc)
+
+        # Player models — input signature [None, None, 298]. Both
+        # pred_fun and next_cards_softmax are ``@tf.function``-wrapped and
+        # need separate traces.
         if self.player_models:
-            dummy_input = np.zeros((1, 1, 298), dtype=np.float16)
-            for player_model in self.player_models:
-                try:
-                    player_model.pred_fun(dummy_input)
-                except:
-                    pass
+            x_play = np.zeros((1, 1, 298), dtype=f16)
+            for i, m in enumerate(self.player_models):
+                _safe(
+                    f"player[{i}].pred_fun",
+                    lambda m=m, x=x_play: m.pred_fun(x),
+                )
+                if hasattr(m, "next_cards_softmax"):
+                    _safe(
+                        f"player[{i}].next_cards_softmax",
+                        lambda m=m, x=x_play: m.next_cards_softmax(x),
+                    )
+
+        # Bidder + opponent: [None, None, None] — any 3D float16 traces it.
+        x_bid = np.zeros((1, 1, 1), dtype=f16)
+        for label, m in (("bidder", self.bidder_model), ("opponent", self.opponent_model)):
+            if m is not None:
+                _safe(
+                    f"{label}.pred_fun_seq",
+                    lambda m=m, x=x_bid: m.pred_fun_seq(x),
+                )
+
+        # BidInfo: [None, None, None]
+        if self.binfo_model is not None:
+            _safe(
+                "binfo.pred_fun",
+                lambda: self.binfo_model.pred_fun(x_bid),
+            )
+
+        # Lead single-dummy: [None, None, 298]
+        x_sd = np.zeros((1, 1, 298), dtype=f16)
+        for label, m in (
+            ("sd_model", self.sd_model),
+            ("sd_model_no_lead", self.sd_model_no_lead),
+        ):
+            if m is not None:
+                _safe(
+                    f"{label}.pred_fun",
+                    lambda m=m, x=x_sd: m.pred_fun(x),
+                )
+
+        # Leader: pred_fun(x [None, 42], b [None, 15])
+        x_leader = np.zeros((1, 42), dtype=f16)
+        b_leader = np.zeros((1, 15), dtype=f16)
+        for label, m in (
+            ("lead_suit", self.lead_suit_model),
+            ("lead_nt", self.lead_nt_model),
+        ):
+            if m is not None:
+                _safe(
+                    f"{label}.pred_fun",
+                    lambda m=m, x=x_leader, b=b_leader: m.pred_fun(x, b),
+                )
+
+        # Contract: [None, 50]
+        if self.contract_model is not None:
+            _safe(
+                "contract.pred_fun",
+                lambda: self.contract_model.pred_fun(np.zeros((1, 50), dtype=f16)),
+            )
+
+        # Trick: [None, 55]
+        if self.trick_model is not None:
+            _safe(
+                "trick.pred_fun",
+                lambda: self.trick_model.pred_fun(np.zeros((1, 55), dtype=f16)),
+            )
 
     @classmethod
     def from_conf(cls, conf: ConfigParser, base_path=None, verbose=False) -> "Models":
