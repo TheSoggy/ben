@@ -20,6 +20,16 @@ worker_connections = 100
 # --- Timeouts ---
 timeout = 120  # matches previous gevent WSGIServer connection_timeout
 graceful_timeout = 30
+# Keep idle HTTP connections alive for 30 s. Default is 2 s, which means
+# any connection sitting between bot turns longer than that gets closed
+# server-side — Phoenix's Finch pool then hands out the dead socket on
+# the next checkout, and the request fails with `:closed`. We saw this
+# fire ~3 times per 30 min of load testing.
+#
+# Pair this with Phoenix's Finch `conn_max_idle_time` < 30 s so the
+# CLIENT closes idle connections before the SERVER does — that way the
+# checkout-vs-close race never happens.
+keepalive = 30
 
 # --- Preload ---
 # Disabled: BBA .NET finalizers segfault during GC (uncatchable by Python).
