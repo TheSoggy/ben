@@ -73,6 +73,8 @@ import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from threading import Lock
+
+from observability import lock_timed
 from nn.timing import ModelTimer
 
 # Intil fixed in Keras, this is needed to remove a wrong warning
@@ -877,6 +879,20 @@ def home():
     html = '<h1><a href="/">Play Now</a></h1>\n'
     return html
 
+
+@app.route('/metrics')
+@limiter.exempt
+def metrics():
+    """Prometheus exposition for the collectors defined in observability.py.
+
+    Internal Docker network only — Ben never publishes 8085 publicly in
+    any environment we run. If that ever changes, gate this route with
+    Flask middleware.
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
 @app.route('/bid')
 def bid():
     try:
@@ -929,7 +945,7 @@ def bid():
             hint_bot = BotBid(vuln, hand, models, sampler, position_i, dealer_i, dds, False, verbose)
             explanations, bba_controlled, preempted = hint_bot.explain_auction(auction)
             hint_bot.bba_is_controlling = bba_controlled
-        with model_lock_bid:
+        with lock_timed(model_lock_bid, "bid"):
             bid = hint_bot.bid(auction)
 
         result = bid.to_dict()
@@ -1025,7 +1041,7 @@ def lead():
                 bba_bot.get_sample(auction)
 
         hint_bot = BotLead(vuln, hand, models, sampler, position, dealer_i, dds, effective_verbose)
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             card_resp = hint_bot.find_opening_lead(auction, aceking)
         user = request.args.get("user")
         #card_resp.who = user
@@ -1172,7 +1188,7 @@ def play():
             features["aceking"] = aceking
 
         # Play
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, False, features, effective_verbose)
         print("Playing:", card_resp.card.symbol(), msg)
         result = card_resp.to_dict()
@@ -1272,7 +1288,7 @@ def cuebid():
         hint_bot = BotBid(vuln, hand, models, sampler, position_i, dealer_i, dds, False, verbose)
         explanations, bba_controlled, preempted = hint_bot.explain_auction(auction, dealer_i)
         hint_bot.bba_is_controlling = bba_controlled
-    with model_lock_bid:
+    with lock_timed(model_lock_bid, "bid"):
         bid = hint_bot.bid(auction)
     result = bid.to_dict()
     explanation = ""
@@ -1422,7 +1438,7 @@ def contract():
         position_i = dealer_enum[seat]
         X = get_binary_contract(position_i, vuln, hand_str, dummy_str, models.n_cards_bidding)
         result = {}
-        with model_lock_bid:
+        with lock_timed(model_lock_bid, "bid"):
             if verbose:
                 print(position_i, vuln, hand_str, dummy_str)
                 print(X)
@@ -1546,7 +1562,7 @@ def claim():
         # Find ace and kings, when defending
         aceking = {}
 
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             card_resp, player_i, msg =  play_api(dealer_i, vuln[0], vuln[1], hands, models, sampler, contract, strain_i, decl_i, auction, cards, cardplayer, claim, aceking, verbose)
         result["result"] = msg
         if record: 
@@ -1824,7 +1840,7 @@ def autoplay():
                     except Exception as e:
                         print(f"[Autoplay] Failed to initialize bbabot: {e}")
 
-                with model_lock_bid:
+                with lock_timed(model_lock_bid, "bid"):
                     bid_resp = hint_bot.bid(auction)
 
                 bid = bid_resp.bid
@@ -1957,7 +1973,7 @@ def autoplay():
             bba_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, leader_nesw, hands[leader_nesw], vuln, dealer_i, models.matchpoint, False)
             aceking = bba_bot.find_aces(auction)
 
-        with model_lock_play:
+        with lock_timed(model_lock_play, "play"):
             lead_bot = BotLead(vuln, hands[leader_nesw], models, sampler, leader_nesw, dealer_i, dds, False)
             lead_resp = lead_bot.find_opening_lead(auction, aceking)
 
@@ -2087,7 +2103,7 @@ def autoplay():
                 played_cards = [card for row in player_cards_played52 for card in row] + current_trick52
 
                 try:
-                    with model_lock_play:
+                    with lock_timed(model_lock_play, "play"):
                         rollout_states, bidding_scores, c_hcp, c_shp, quality, probability_of_occurence, lead_scores, play_scores, logical_play_scores, discard_scores, worlds = sampler.init_rollout_states(
                             trick_i, cardplayer_i, card_players, played_cards, player_cards_played,
                             shown_out_suits, discards, features["aceking"], current_trick, opening_lead,
