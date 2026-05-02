@@ -72,7 +72,7 @@ from werkzeug.exceptions import HTTPException
 import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 
 from observability import lock_timed
 from nn.timing import ModelTimer
@@ -731,7 +731,22 @@ limiter = Limiter(
 )
 # Initialize the lock
 model_lock_bid = Lock()
-model_lock_play = Lock()
+
+# /play uses a BoundedSemaphore instead of a plain Lock so multiple TF
+# inferences can run concurrently within a single gunicorn worker. This
+# was previously unsafe — concurrent first-calls to a @tf.function race
+# on the trace cache and corrupt state (the failure mode that killed
+# PR #75's `BoundedSemaphore(2)` experiment). It is now safe because
+# `gunicorn.conf.py:post_worker_init` calls `Models.warm_up()` once per
+# worker after fork, populating every trace before any real request
+# arrives. Concurrent calls hit the cached ConcreteFunction.
+#
+# Tunable via BEN_PLAY_CONCURRENCY (default 2). Set to 1 to revert to
+# Lock-equivalent serialization without redeploying — the BoundedSemaphore
+# raises ValueError on over-release, surfacing acquire/release mistakes
+# that a plain Semaphore would silently swallow.
+_play_concurrency = max(1, int(os.environ.get("BEN_PLAY_CONCURRENCY", "2")))
+model_lock_play = BoundedSemaphore(_play_concurrency)
 # Set up logging
 class PrefixedTimedRotatingFileHandler(TimedRotatingFileHandler):
     def __init__(self, prefix, when='midnight', interval=1, backupCount=0):

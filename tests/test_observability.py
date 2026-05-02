@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 
 import pytest
 
@@ -158,3 +158,46 @@ def test_metrics_exposition_emits_lock_series() -> None:
     assert "ben_lock_wait_seconds_bucket" in body
     assert "ben_lock_hold_seconds_bucket" in body
     assert 'lock="play"' in body
+
+
+@pytest.mark.unit
+def test_lock_timed_works_with_bounded_semaphore() -> None:
+    """`model_lock_play` is a `BoundedSemaphore(N)` in production once
+    TF warmup has populated the trace cache. The `lock_timed` helper
+    must work with both `Lock` and `BoundedSemaphore` (same
+    `acquire`/`release` API). This guard prevents accidentally
+    coupling `lock_timed` to `Lock`-specific behaviour in the future.
+    """
+    sem = BoundedSemaphore(2)
+
+    baseline_busy = _gauge_value(BEN_WORKERS_BUSY, lock="play")
+    baseline_count = _sample_count(BEN_LOCK_HOLD, lock="play")
+
+    with lock_timed(sem, "play"):
+        assert _gauge_value(BEN_WORKERS_BUSY, lock="play") == baseline_busy + 1
+
+    assert _gauge_value(BEN_WORKERS_BUSY, lock="play") == baseline_busy
+    assert _sample_count(BEN_LOCK_HOLD, lock="play") == baseline_count + 1
+
+
+@pytest.mark.unit
+def test_bounded_semaphore_admits_n_concurrent_holders() -> None:
+    """Sanity check on the BoundedSemaphore semantics we rely on:
+    N=2 must allow 2 simultaneous acquisitions. If TF or pythonnet ever
+    swaps in a different sync primitive that doesn't support this,
+    `lock_timed` would still "work" but the throughput win disappears.
+    """
+    sem = BoundedSemaphore(2)
+
+    assert sem.acquire(blocking=False) is True
+    assert sem.acquire(blocking=False) is True
+    # Third call must refuse (capacity exhausted).
+    assert sem.acquire(blocking=False) is False
+
+    # Release one — capacity should reopen.
+    sem.release()
+    assert sem.acquire(blocking=False) is True
+
+    # Now exactly 2 are held; release them.
+    sem.release()
+    sem.release()
