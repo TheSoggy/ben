@@ -589,6 +589,15 @@ class CardPlayer:
 
         card_result = {}
         claim_cards = []
+        # Guard against empty card_tricks — happens when DDS rejects every
+        # PBN sample ("All N PBN deals invalid, skipping DDS solve") so the
+        # upstream `dd_solved` came back empty and `expected_tricks_dds*`
+        # produced no entries. Without this, `max([])` raised and the
+        # request returned HTTP 400 with "max() iterable argument is empty"
+        # — same shape as the min()/factorial guards added in
+        # fix/empty-sample-guards.
+        if not card_tricks:
+            return card_result, (claim_cards, 0)
         max_value = round(max(card_tricks.values()),1)
         claim_cards = [k for k, v in card_tricks.items() if abs(v - max_value) <= 0.0001]
         for key in dd_solved.keys():
