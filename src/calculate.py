@@ -2,7 +2,14 @@ import sys
 import scoring
 
 def check_array_lengths(dictionary):
+    # Guard against an empty `data` dict — happens when every PBN sample
+    # was rejected by DDS ("All N PBN deals invalid, skipping DDS solve")
+    # so the upstream `dd_solved` came back without any candidate cards.
+    # Without this, `min([])` raised and the request returned HTTP 500
+    # instead of letting the caller fall back gracefully.
     lengths = [len(value) for value in dictionary.values()]
+    if not lengths:
+        return 0
     return min(lengths)
 
 
@@ -11,6 +18,8 @@ def calculate_mp_score_probability( data, probabilities_list):
     keys = list(data.keys())  # Get the list of keys
     num_arrays = len(keys)
     num_plays = check_array_lengths(data)
+    if num_arrays == 0 or num_plays == 0:
+        return scores
     # Convert to plain Python lists to avoid numpy scalar overhead in tight loops
     probs = [float(p) for p in probabilities_list[:num_plays]]
     data_lists = {k: [float(v) for v in vals[:num_plays]] for k, vals in data.items()}
@@ -43,6 +52,8 @@ def calculate_mp_score( data):
     keys = list(data.keys())  # Get the list of keys
     num_arrays = len(keys)
     num_plays = check_array_lengths(data)
+    if num_arrays == 0 or num_plays == 0:
+        return scores
 
     if num_arrays == 1:
         scores[keys[0]] = 100
@@ -73,6 +84,8 @@ def calculate_imp_score_probability( data, probabilities_list):
     keys = list(data.keys())  # Get the list of keys
     num_plays = len(keys)
     num_samples = check_array_lengths(data)
+    if num_plays == 0 or num_samples == 0:
+        return scores
     # Convert to plain Python lists to avoid numpy scalar overhead in tight loops
     probs = [float(p) for p in probabilities_list[:num_samples]]
     data_lists = {k: [float(v) for v in vals[:num_samples]] for k, vals in data.items()}
@@ -109,6 +122,8 @@ def calculate_imp_score( data):
     keys = list(data.keys())  # Get the list of keys
     num_plays = len(keys)
     num_samples = check_array_lengths(data)
+    if num_plays == 0 or num_samples == 0:
+        return scores
 
     if num_plays == 1:
         scores[keys[0]] = 0

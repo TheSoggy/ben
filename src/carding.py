@@ -94,6 +94,14 @@ def select_right_card_for_play(candidate_cards, rng, contract, models, hand_str,
 
     # Perhaps this should be removed, second card can be from another suit, so not sure difference make sense
     if not models.force_suitc:
+        # All four checks below compare the top candidate against the
+        # second-best one. If there's only a single candidate (forced
+        # play, void, or DDS returned a degenerate result) just pick it
+        # and skip the comparisons — accessing `candidate_cards[1]`
+        # otherwise raised IndexError and turned a clean forced play
+        # into an HTTP 500.
+        if len(candidate_cards) < 2:
+            return candidate_cards[0].card, who
             # If the first card is better then don't evaluate
         if hasattr(candidate_cards[0], 'p_make_contract'):
             if candidate_cards[0].p_make_contract > candidate_cards[1].p_make_contract + 0.1:
@@ -101,7 +109,7 @@ def select_right_card_for_play(candidate_cards, rng, contract, models, hand_str,
         if hasattr(candidate_cards[0], 'expected_tricks_dd'):
             if candidate_cards[0].expected_tricks_dd > candidate_cards[1].expected_tricks_dd + 1:
                 return candidate_cards[0].card, who
-        
+
         if hasattr(candidate_cards[0], 'expected_score_mp') and candidate_cards[0].expected_score_mp is not None:
             if candidate_cards[0].expected_score_mp > candidate_cards[1].expected_score_mp + 5:
                 return candidate_cards[0].card, who

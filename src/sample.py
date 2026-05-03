@@ -719,6 +719,13 @@ class Sample:
 
 
     def count_combinations(self, n, k):
+        # C(n, k) is 0 by convention when k < 0, n < 0, or k > n.
+        # Without these guards math.factorial raised
+        # "factorial() not defined for negative values" on degenerate
+        # inputs (e.g. an exhausted sample bucket where the caller
+        # passed a negative remaining-count).
+        if n < 0 or k < 0 or k > n:
+            return 0
         if k > n - k:  # Use the property that C(n, k) == C(n, n-k)
             k = n - k
         return math.factorial(n) // (math.factorial(k) * math.factorial(n - k))
