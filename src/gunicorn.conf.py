@@ -61,6 +61,42 @@ def post_worker_init(worker):
     """
     import os as _os
 
+    # Pin this worker to a single CPU. Without pinning, the kernel can
+    # migrate a worker between vCPUs between requests; each migration
+    # cold-evicts L1/L2 cache, so the next TF inference re-warms the
+    # cache from L3/RAM (~5-15 % per-call slowdown for small TF graphs
+    # like ours). With 4 workers on a 4-vCPU box, one worker per CPU
+    # is the natural assignment.
+    #
+    # Each worker atomically claims the next CPU index via a small
+    # lock file under /tmp. The file is wiped per container start so
+    # every restart begins fresh at index 0.
+    try:
+        import fcntl
+
+        cpu_list = sorted(_os.sched_getaffinity(0))
+        if cpu_list:
+            counter_file = "/tmp/ben_cpu_pin_index"
+            with open(counter_file, "a+") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                f.seek(0)
+                contents = f.read().strip()
+                idx = int(contents) if contents else 0
+                f.seek(0)
+                f.truncate()
+                f.write(str(idx + 1))
+            target_cpu = cpu_list[idx % len(cpu_list)]
+            _os.sched_setaffinity(0, {target_cpu})
+            worker.log.info(
+                "ben: pinned worker pid=%s to cpu=%d (idx=%d, available=%s)",
+                worker.pid, target_cpu, idx, cpu_list,
+            )
+    except (AttributeError, OSError, ImportError) as exc:
+        # macOS / non-Linux dev environments don't have sched_setaffinity;
+        # `fcntl.flock` may also be missing on Windows. Either way, just
+        # skip pinning and let the kernel scheduler do its thing.
+        worker.log.info("ben: skipping CPU pinning (%s)", exc)
+
     if _os.environ.get("BEN_DISABLE_WARMUP") == "1":
         worker.log.info("ben warmup: disabled via BEN_DISABLE_WARMUP")
         return
