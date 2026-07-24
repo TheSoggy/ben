@@ -93,6 +93,7 @@ from flask_limiter.util import get_remote_address # Default key function (limits
 import pprint
 import argparse
 import conf
+from ddsolver.ddsrecorder import DDSRecorder
 import numpy as np
 from sample import Sample
 from util import get_play_status, get_singleton, get_possible_cards, calculate_seed
@@ -554,6 +555,7 @@ parser.add_argument("--seed", type=int, default=42, help="Seed for random")
 parser.add_argument("--matchpoint", type=str_to_bool, default=None, help="Playing match point")
 parser.add_argument("--nolimit", type=str_to_bool, default=str_to_bool(os.environ.get("BEN_NOLIMIT", "False")), help="Removed limit on number of requests to the API")
 parser.add_argument("--allowed-hosts", type=str, default=None, help="Comma-separated list of allowed Host header values (e.g. 'localhost,ben,myhost.example.com'). Default: localhost,127.0.0.1. Use '*' to allow all hosts.")
+parser.add_argument("--ddsrecord", default=None, help="Record every DDS call to this file for later benchmarking with ddsreplay.py (.gz compresses; a directory gets one file per process). Records are not tagged with a board here - requests are served concurrently.")
 
 # When running under gunicorn, sys.argv contains gunicorn's args (including --config
 # which collides with our --config flag). Use env vars exclusively in that case.
@@ -561,6 +563,9 @@ if 'gunicorn' in sys.argv[0]:
     args = parser.parse_args([])  # Parse with no args, use env var defaults
 else:
     args, _ = parser.parse_known_args()
+
+# Before any DDSolver is built, so nothing is missed.
+DDSRecorder.configure(args.ddsrecord)
 
 configfile = args.config
 opponentfile = args.opponent

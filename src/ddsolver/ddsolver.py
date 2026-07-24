@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import time
 import ctypes
 import subprocess
 from typing import Dict, List
@@ -9,6 +10,7 @@ from objects import Card
 from ddsolver import dds
 from colorama import Fore, Back, Style, init
 from nn.timing import ModelTimer
+from ddsolver.ddsrecorder import DDSRecorder
 
 _DDS_SUBPROCESS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dds_subprocess.py')
 _DDS_USE_SUBPROCESS = sys.platform == 'darwin'  # Only needed on macOS where DDS crashes
@@ -31,13 +33,23 @@ class DDSolver:
         if verbose:
             sys.stderr.write(f"DDSolver being loaded version 2.9.0 - dds mode {dds_mode} - max threads {max_threads}\n")
         self.dds_mode = dds_mode
+        # No-op unless --ddsrecord / BEN_DDS_RECORD asked for a recording. If the
+        # entry point already opened one, this just labels it with the DDS build
+        # actually in use. See ddsrecorder.py / ddsreplay.py.
+        DDSRecorder.configure(dds_version=self.version(), dds_mode=dds_mode,
+                              threads=max_threads)
 
     def version(self):  
         return "2.9.0"
     
     def calculatepar(self, hand, vuln, print_result=True):
         with ModelTimer.time_call('dds_par'):
-            return self._calculatepar_impl(hand, vuln, print_result)
+            t0 = time.perf_counter()
+            result = self._calculatepar_impl(hand, vuln, print_result)
+            if DDSRecorder.enabled:
+                DDSRecorder.record_par(hand, vuln, result,
+                                       (time.perf_counter() - t0) * 1000)
+            return result
 
     def _calculatepar_impl(self, hand, vuln, print_result=True):
         tableDealPBN = dds.ddTableDealPBN()
@@ -98,21 +110,26 @@ class DDSolver:
         remaining = sum(1 for c in pbn if c not in '. ')
         return (52 - remaining - len(current_trick)) // 4 + 1
 
-    def solve(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
+    def solve(self, strain_i, leader_i, current_trick, hands_pbn, solutions, purpose=""):
+        """Solve a batch of sampled hands with double-dummy.
+
+        purpose is a short tag describing *why* DDS was invoked (e.g. "play",
+        "claimcheck", "lead", "bid"). It is folded into the timing label so the
+        MODEL TIMING SUMMARY separates, say, card-play evaluations from claim
+        checks at the same trick instead of lumping them into one opaque count.
+        """
         trick = self._trick_number(hands_pbn, current_trick)
-        with ModelTimer.time_call(f'dds_solve_t{trick:02d}', items=len(hands_pbn)):
-            results = self.solve_helper(strain_i, leader_i, current_trick, hands_pbn[:dds.MAXNOOFBOARDS], solutions)
-            if len(hands_pbn) > dds.MAXNOOFBOARDS:
-                i = dds.MAXNOOFBOARDS
-                while i < len(hands_pbn):
-                    more_results = self.solve_helper(strain_i, leader_i, current_trick, hands_pbn[i:i+dds.MAXNOOFBOARDS], solutions)
+        label = f'dds_solve_t{trick:02d}_{purpose}' if purpose else f'dds_solve_t{trick:02d}'
+        with ModelTimer.time_call(label, items=len(hands_pbn)):
+            t0 = time.perf_counter()
+            results = self.solve_helper(strain_i, leader_i, current_trick, hands_pbn, solutions)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
 
-                    for card, values in more_results.items():
-                        results[card] = results[card] + values
+        if DDSRecorder.enabled:
+            DDSRecorder.record_solve(strain_i, leader_i, current_trick, hands_pbn,
+                                     solutions, purpose, trick, results, elapsed_ms)
 
-                    i += dds.MAXNOOFBOARDS
-
-        return results 
+        return results
 
     _VALID_CARDS = set('AKQJT98765432')
 
@@ -162,6 +179,23 @@ class DDSolver:
         return True, None
 
     def solve_helper(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
+        # DDS's batch API takes at most MAXNOOFBOARDS deals per call: chunk the
+        # batch and merge. Chunking lives here (not in solve) so ddsreplay.py,
+        # which calls solve_helper directly with full recorded batches, behaves
+        # exactly like a live solve.
+        results = self._solve_chunk(strain_i, leader_i, current_trick, hands_pbn[:dds.MAXNOOFBOARDS], solutions)
+        i = dds.MAXNOOFBOARDS
+        while i < len(hands_pbn):
+            more_results = self._solve_chunk(strain_i, leader_i, current_trick, hands_pbn[i:i+dds.MAXNOOFBOARDS], solutions)
+
+            for card, values in more_results.items():
+                results[card] = results[card] + values
+
+            i += dds.MAXNOOFBOARDS
+
+        return results
+
+    def _solve_chunk(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
         card_rank = [0x4000, 0x2000, 0x1000, 0x0800, 0x0400, 0x0200, 0x0100, 0x0080, 0x0040, 0x0020, 0x0010, 0x0008, 0x0004]
 
         # Filter out invalid PBN deals to prevent DDS crash (C library aborts on bad input)
