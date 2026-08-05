@@ -31,6 +31,13 @@ import time
 import datetime
 import asyncio
 import websockets
+# Silence benign "opening handshake failed" ERROR logs. A health check, port
+# scan, or a browser hitting the ws:// port over plain HTTP opens a TCP
+# connection and closes it without a valid WebSocket handshake; websockets
+# logs that at ERROR (InvalidMessage / EOFError) even though it is harmless and
+# the server keeps running. Raise this one logger above ERROR to keep the
+# console clean without affecting BEN's own logging.
+logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
 from packaging import version as pkg_version
 import argparse
 import game
@@ -49,7 +56,7 @@ import gc
 import psutil
 from nn.timing import ModelTimer
 
-version = '0.8.7.7'
+version = '0.8.8.4'
 init()
 
 # Check websockets version - 15.0+ removed path as handler argument
@@ -205,6 +212,13 @@ if models.use_suitc:
         print(f"SuitC failed to load: {ex} - disabling SuitC")
         models.use_suitc = False
 
+# ACE (Ace.dll) is only supported on Windows - its DDS backend (libbcalcdds)
+# has no Linux/macOS build. Disable it elsewhere so PIMC is used instead.
+if sys.platform != 'win32' and (getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False)):
+    print("ACE is only supported on Windows - disabling ACE on this platform (PIMC will be used instead).")
+    models.ace_use_declaring = False
+    models.ace_use_defending = False
+
 if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False):
     from ace.ACE import ACEDLL
     ace = ACEDLL(None, None, None, None, None, None, None)
@@ -226,10 +240,10 @@ if models.pimc_use_declaring or models.pimc_use_defending:
         models.pimc_use_declaring = False
         models.pimc_use_defending = False
 
-from ddsolver.ddssolver import DDSSolver
+from ddsolver.ddsolver import DDSolver
 dds_max_threads = configuration.getint('dds', 'dds_max_threads', fallback=0)
-dds = DDSSolver(max_threads=dds_max_threads)
-print(f"DDSSolver enabled. Version {dds.version()} Max threads {dds_max_threads}")
+dds = DDSolver(max_threads=dds_max_threads)
+print(f"DDSolver enabled. Version {dds.version()} Max threads {dds_max_threads}")
 
 if args.boards:
     filename = args.boards

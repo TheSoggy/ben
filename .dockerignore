@@ -26,10 +26,16 @@ install/
 scripts/
 training/
 demo/
+# Not needed by either Docker image — keep them out of the build context
+Practice/
 Boards/
 Challenges/
 logs/
 conda_setup.sh
+# Only BBA/CC/ is copied into the image; exclude the rest of BBA/ (large)
+BBA/*
+!BBA/CC
+# models/ - included for Docker build
 
 # Database files
 src/gamedb.*

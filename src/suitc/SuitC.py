@@ -27,17 +27,28 @@ elif sys.platform == 'darwin':
 else:
     suitclib = 'libsuitc.so'
 
-print(f"SuitCLib: {suitclib}")
-
 SuitCLib_PATH = os.path.join(BIN_FOLDER, suitclib)
 
+# Standalone worker used to run call_suitc in an isolated, killable subprocess.
+SUITC_WORKER_PATH = os.path.join(script_dir, "suitc_worker.py")
+
+# Wall-clock budget for a single SuitC call. A runaway merge_quirk/check_quirk
+# loop is SIGKILLed at this point and the call fails (gracefully handled by
+# callers) instead of freezing the server. Override via SUITC_TIMEOUT_SECONDS.
+DEFAULT_SUITC_TIMEOUT = float(os.getenv("SUITC_TIMEOUT_SECONDS", "10"))
+
 import ctypes
+import subprocess
 from ctypes import c_wchar_p, c_int, POINTER, create_unicode_buffer, byref, cast, addressof
 
+
+class SuitCTimeout(Exception):
+    """Raised when a SuitC call exceeds its time budget and is killed."""
+
+
 class SuitCLib:
-    def __init__(self, verbose):
-        if SuitCLib == 'N/A':
-            raise RuntimeError("suitclib is not available on this platform.")
+    def __init__(self, verbose, timeout=None):
+        self.timeout = DEFAULT_SUITC_TIMEOUT if timeout is None else timeout
         try:
             if verbose:
                 print(f"loading {SuitCLib_PATH}")
@@ -154,61 +165,55 @@ class SuitCLib:
         return possible_cards
 
     def make_suitc_call(self, input_str):
-        input_length = len(input_str)
         if self.verbose:
             print("SuitC Input: " + input_str)
-        
-        # --- Input Buffer (wchar_t** ppcharInput) ---
-        # C side will do (*ppcharInput)[i]
-        # So Python needs to create a wchar_t* and pass a pointer to it.
-        # Method 1: ctypes.c_wchar_p implicitly handles string literal
-        c_input_str_ptr = ctypes.c_wchar_p(input_str) # This is a wchar_t*
-        # To pass wchar_t**, we pass a pointer to this wchar_t*
-        pp_input_str = ctypes.byref(c_input_str_ptr)
 
-        # --- Output Buffer (wchar_t** ppcharOutput) ---
-        # C side will do (*ppcharOutput)[i] = ... to fill Python's buffer
-        # Python needs to create a buffer, get a wchar_t* to it, and pass a pointer to that wchar_t*
-        output_buffer_capacity = 8 * 32768  # Number of wchar_t characters
-        # This is the actual memory for the output string
-        actual_output_buffer = ctypes.create_unicode_buffer(output_buffer_capacity) 
-        # This is a wchar_t* pointing to the start of actual_output_buffer
-        c_output_buffer_ptr = ctypes.c_wchar_p(ctypes.addressof(actual_output_buffer)) 
-        # To pass wchar_t**, we pass a pointer to this c_output_buffer_ptr
-        pp_output_buffer = ctypes.byref(c_output_buffer_ptr)
-        output_size = ctypes.c_int() # For int* pCharOutputSize
+        # Run the call in an isolated worker process so a runaway native loop
+        # (merge_quirk/check_quirk) can be killed on timeout instead of freezing
+        # the single-threaded gevent server. subprocess is gevent-patched
+        # (monkey.patch_all), so the wait yields to other greenlets and the
+        # child is SIGKILLed on timeout. See suitc_worker.py and the project
+        # memory note `suitc-hang-freezes-gameapi`.
+        try:
+            proc = subprocess.run(
+                [sys.executable, SUITC_WORKER_PATH, SuitCLib_PATH],
+                input=input_str,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired:
+            # The child has been killed. Surface the offending holding so the
+            # native loop can be reproduced/fixed, then fail only this call.
+            msg = f"SuitC timed out after {self.timeout}s and was killed. Input: {input_str}"
+            sys.stderr.write(f"{Fore.RED}{msg}{Fore.RESET}\n")
+            raise SuitCTimeout(msg)
 
-        # --- Details Buffer (wchar_t** ppcharOptimumDetails) ---
-        details_buffer_capacity = 8 * 32768
-        actual_details_buffer = ctypes.create_unicode_buffer(details_buffer_capacity)
-        c_details_buffer_ptr = ctypes.c_wchar_p(ctypes.addressof(actual_details_buffer))
-        pp_details_buffer = ctypes.byref(c_details_buffer_ptr)
-        details_size = ctypes.c_int() # For int* pcharOptimumDetailsSize
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"SuitC worker exited with code {proc.returncode}. stderr: {proc.stderr.strip()}"
+            )
 
-        result = self.suitc.call_suitc(
-            pp_input_str,
-            input_length,
-            pp_output_buffer,
-            ctypes.byref(output_size),
-            pp_details_buffer,
-            ctypes.byref(details_size)
-        )
+        # Use raw_decode rather than json.loads: it parses the leading JSON
+        # object and ignores any trailing bytes, so a stray native-stdout
+        # fragment appended after the result (see suitc_worker.py) can't break
+        # parsing as defence-in-depth.
+        try:
+            result, _ = json.JSONDecoder().raw_decode(proc.stdout.lstrip())
+        except (json.JSONDecodeError, ValueError):
+            raise RuntimeError(
+                f"SuitC worker produced unparseable output: {proc.stdout[:500]!r} "
+                f"stderr: {proc.stderr[:500]!r}"
+            )
 
-        if self.verbose:
-            print(f"call_suitc returned: {result}")
-            print(f"Output size from C: {output_size.value}")
-            print(f"Details size from C: {details_size.value}")
+        if result.get("rc", -1) != 0:
+            raise RuntimeError(result.get("error", f"SuitC returned rc={result.get('rc')}"))
 
-        if result != 0:
-            print("Error: " + result)
-            sys.exit(1)
-        # To get the string values from the buffers:
-        # The C code wrote into actual_output_buffer and actual_details_buffer
-        # via the pointers.
-        returned_output = actual_output_buffer.value[:output_size.value] # Slice to actual length
-        returned_details = actual_details_buffer.value[:details_size.value]
+        returned_output = result.get("output", "")
+        returned_details = result.get("details", "")
 
         if self.verbose:
+            print(f"call_suitc returned: {result.get('rc')}")
             print(f"Returned output: '{returned_output}'")
             print(f"Returned details: '{returned_details}'")
 

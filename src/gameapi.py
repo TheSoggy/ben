@@ -6,7 +6,6 @@ import gc
 import os
 import sys
 import platform
-import ctypes
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = 'T'
 # Just disables the warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -102,7 +101,7 @@ from claim import Claimer
 dealer_enum = {'N': 0, 'E': 1, 'S': 2, 'W': 3}
 from colorama import Fore, Back, Style, init
 
-version = '0.8.7.7'
+version = '0.8.8.4'
 init()
 
 def handle_exception(e):
@@ -567,6 +566,9 @@ else:
 # Before any DDSolver is built, so nothing is missed.
 DDSRecorder.configure(args.ddsrecord)
 
+# Before any DDSolver is built, so nothing is missed.
+DDSRecorder.configure(args.ddsrecord)
+
 configfile = args.config
 opponentfile = args.opponent
 verbose = args.verbose
@@ -696,6 +698,13 @@ if models.pimc_use_declaring or models.pimc_use_defending:
         models.pimc_use_declaring = False
         models.pimc_use_defending = False
 
+# ACE (Ace.dll) is only supported on Windows - its DDS backend (libbcalcdds)
+# has no Linux/macOS build. Disable it elsewhere so PIMC is used instead.
+if sys.platform != 'win32' and (getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False)):
+    print("ACE is only supported on Windows - disabling ACE on this platform (PIMC will be used instead).")
+    models.ace_use_declaring = False
+    models.ace_use_defending = False
+
 if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defending', False):
     try:
         from ace.ACE import ACEDLL
@@ -709,10 +718,10 @@ if getattr(models, 'ace_use_declaring', False) or getattr(models, 'ace_use_defen
         models.ace_use_declaring = False
         models.ace_use_defending = False
 
-from ddsolver.ddssolver import DDSSolver
+from ddsolver.ddsolver import DDSolver
 dds_max_threads = configuration.getint('dds', 'dds_max_threads', fallback=0)
-dds = DDSSolver(max_threads=dds_max_threads)
-print(f"DDSSolver enabled. Version {dds.version()} Max threads {dds_max_threads}")
+dds = DDSolver(max_threads=dds_max_threads)
+print(f"DDSolver enabled. Version {dds.version()} Max threads {dds_max_threads}")
 
 log_file_path = os.path.join(config_path, 'logs')
 if not os.path.exists(log_file_path):
@@ -1687,52 +1696,46 @@ def double_dummy():
         v = request.args.get("vul", "")
         vuln = parse_vuln(v)
 
-        # Use the DDS library (ddss or fallback dds)
-        if dds._fallback:
-            from ddsolver import dds as dds_lib
-        else:
-            from ddsolver import ddss as dds_lib
+        # DDS 3.0: calc_all_tables_pbn computes the DD table and (mode != -1)
+        # the par score in one call. Vulnerability encoding matches the old
+        # dds.Par(): 0=none, 1=both, 2=NS, 3=EW.
+        from ddsolver.ddsolver import dds3
 
-        tableDealPBN = dds_lib.ddTableDealPBN()
-        table = dds_lib.ddTableResults()
-        myTable = ctypes.pointer(table)
-        tableDealPBN.cards = ("N:" + hands_str).encode('utf-8')
-
-        res = dds_lib.CalcDDtablePBN(tableDealPBN, myTable)
-        if res != 1:
-            error_message = dds_lib.get_error_message(res)
-            return jsonify({"error": f"DDS CalcDDtablePBN error {res}: {error_message}"}), 400
-
-        # Extract DD table from DDS resTable.
-        # C struct: int resTable[DDS_STRAINS=5][DDS_HANDS=4] → resTable[strain][hand]
-        # But ctypes defines (c_int * 5) * 4 → a [4][5] array with stride 5,
-        # so resTable[i][j] in Python uses the wrong stride vs C's stride of 4.
-        # Read the flat memory directly with the correct C stride.
-        strain_names = ["spades", "hearts", "diamonds", "clubs", "notrump"]
-        position_names = ["north", "east", "south", "west"]
-
-        flat = ctypes.cast(ctypes.pointer(table.resTable), ctypes.POINTER(ctypes.c_int))
-        dd_table = {}
-        for di, pos in enumerate(position_names):
-            dd_table[pos] = {}
-            for si, strain in enumerate(strain_names):
-                # C layout: resTable[strain][hand] at flat offset strain * 4 + hand
-                dd_table[pos][strain] = flat[si * 4 + di]
-
-        # Calculate par
-        pres = dds_lib.parResults()
         v_code = 0
         if vuln[0]: v_code = 2
         if vuln[1]: v_code = 3
         if vuln[0] and vuln[1]: v_code = 1
 
+        pbn = "N:" + hands_str
         par_score = 0
         par_contract = ""
-        par_res = dds_lib.Par(myTable, pres, v_code)
-        if par_res == 1:
-            par_str = pres.parScore[0].value.decode('utf-8')
-            par_score = int(par_str.split()[1])
-            par_contract = pres.parContractsString[0].value.decode('utf-8').strip()
+        try:
+            result = dds3.calc_all_tables_pbn([pbn], mode=v_code)
+            par_results = result.get("par_results") or []
+            if par_results:
+                # par_score is a 2-element list of strings, e.g. "NS 420" / "EW -420"
+                par_str = par_results[0]["par_score"][0]
+                par_score = int(par_str.split()[1])
+                par_contract = par_results[0]["par_contracts_string"][0].strip()
+        except Exception:
+            # Par failed — recompute the table alone (mode=-1 skips par), matching
+            # the old behavior where a par error still returned the DD table.
+            result = dds3.calc_all_tables_pbn([pbn], mode=-1)
+
+        tables = result.get("tables") or []
+        if not tables:
+            return jsonify({"error": "DDS returned no DD table"}), 400
+
+        # res_table[strain][hand]: strains [S, H, D, C, NT], hands [N, E, S, W]
+        strain_names = ["spades", "hearts", "diamonds", "clubs", "notrump"]
+        position_names = ["north", "east", "south", "west"]
+
+        res_table = tables[0]["res_table"]
+        dd_table = {}
+        for di, pos in enumerate(position_names):
+            dd_table[pos] = {}
+            for si, strain in enumerate(strain_names):
+                dd_table[pos][strain] = res_table[si][di]
 
         return jsonify({
             "dd_table": dd_table,
@@ -2421,47 +2424,47 @@ def solve_board():
         if hands is None or trump is None or first is None:
             return jsonify({"error": "hands, trump, and first are required"}), 400
 
-        if dds._fallback:
-            from ddsolver import dds as dds_lib
-        else:
-            from ddsolver import ddss as dds_lib
-
-        # Build dealPBN struct
-        dl = dds_lib.dealPBN()
-        dl.trump = trump
-        dl.first = first
+        # DDS 3.0: solve_board_pbn replaces the old ctypes SolveBoardPBN.
+        from ddsolver.ddsolver import dds3
 
         # Parse current trick cards into suit/rank arrays
         rank_map = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
                     '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
         suit_map = {'S': 0, 'H': 1, 'D': 2, 'C': 3}
 
+        trick_suit = [0, 0, 0]
+        trick_rank = [0, 0, 0]
         for i in range(3):
             if i < len(current_trick):
                 card_str = current_trick[i]
-                dl.currentTrickSuit[i] = suit_map.get(card_str[0], 0)
-                dl.currentTrickRank[i] = rank_map.get(card_str[1:], 0)
-            else:
-                dl.currentTrickSuit[i] = 0
-                dl.currentTrickRank[i] = 0
+                trick_suit[i] = suit_map.get(card_str[0], 0)
+                trick_rank[i] = rank_map.get(card_str[1:], 0)
 
-        dl.remainCards = ("N:" + hands).encode('utf-8')
+        pbn = "N:" + hands
 
         # Solve: target=-1 (max tricks), solutions=3 (all legal plays), mode=1
         # mode=1 computes scores for forced plays (mode=0 returns -2).
         # For non-forced plays: score[i] = tricks for first's side.
         # For forced plays: score[i] = tricks for the next player's side.
         # We normalize forced play scores to first's side for consistency.
-        fut = dds_lib.futureTricks()
-        res = dds_lib.SolveBoardPBN(dl, -1, 3, 1, ctypes.pointer(fut), 0)
-        if res != 1:
-            error_message = dds_lib.get_error_message(res)
-            return jsonify({"error": f"DDS error: {error_message}"}), 500
+        try:
+            fut = dds3.solve_board_pbn(
+                pbn,
+                trump=trump,
+                first=first,
+                current_trick_suit=tuple(trick_suit),
+                current_trick_rank=tuple(trick_rank),
+                target=-1,
+                solutions=3,
+                mode=1,
+            )
+        except Exception as e:
+            return jsonify({"error": f"DDS error: {e}"}), 500
 
         # DDS returns score[i] = tricks for the side of the NEXT player to play
         # (the player whose legal cards are being evaluated).
         # The caller (Elixir) knows who the next player is and handles conversion.
-        n_in_trick = sum(1 for j in range(3) if dl.currentTrickRank[j] != 0)
+        n_in_trick = sum(1 for j in range(3) if trick_rank[j] != 0)
         next_player_pos = (first + n_in_trick) % 4
 
         # Handle DDS -2 for forced plays: advance position and re-query in a loop.
@@ -2473,21 +2476,22 @@ def solve_board():
                         9: '9', 10: 'T', 11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
 
         forced_score = None
-        if fut.cards == 1 and fut.score[0] == -2:
+        if fut["cards"] == 1 and fut["score"][0] == -2:
             # Loop to resolve cascading forced plays
-            cur_dl = dl
             cur_fut = fut
             cur_first = first
             cur_n_in_trick = n_in_trick
-            cur_pbn = dl.remainCards.decode('utf-8')
+            cur_pbn = pbn
+            cur_trick_suit = list(trick_suit)
+            cur_trick_rank = list(trick_rank)
             cur_next_pos = next_player_pos
 
             for _ in range(13):  # max 13 cards in a hand
-                if cur_fut.cards != 1 or cur_fut.score[0] != -2:
+                if cur_fut["cards"] != 1 or cur_fut["score"][0] != -2:
                     break
 
-                f_suit = cur_fut.suit[0]
-                f_rank = cur_fut.rank[0]
+                f_suit = cur_fut["suit"][0]
+                f_rank = cur_fut["rank"][0]
                 f_char = rank_letters.get(f_rank, '')
 
                 # Remove forced card from PBN hands
@@ -2498,48 +2502,53 @@ def solve_board():
                 parts[cur_next_pos] = '.'.join(p_suits)
                 new_pbn = prefix + ' '.join(parts)
 
-                # Build new deal with forced card played
-                dl2 = dds_lib.dealPBN()
-                dl2.trump = trump
-                dl2.remainCards = new_pbn.encode('utf-8')
-
+                # Build new deal state with forced card played
                 if cur_n_in_trick < 3:
                     # Add forced card to current trick (doesn't complete it)
-                    dl2.first = cur_first
-                    for j in range(3):
-                        dl2.currentTrickSuit[j] = cur_dl.currentTrickSuit[j]
-                        dl2.currentTrickRank[j] = cur_dl.currentTrickRank[j]
-                    dl2.currentTrickSuit[cur_n_in_trick] = f_suit
-                    dl2.currentTrickRank[cur_n_in_trick] = f_rank
+                    new_first = cur_first
+                    new_trick_suit = list(cur_trick_suit)
+                    new_trick_rank = list(cur_trick_rank)
+                    new_trick_suit[cur_n_in_trick] = f_suit
+                    new_trick_rank[cur_n_in_trick] = f_rank
                     new_n_in_trick = cur_n_in_trick + 1
                 else:
                     # n_in_trick == 3: forced card is 4th, trick completes.
                     # Determine the trick winner using deck52.get_trick_winner_i.
                     # Convert DDS suit/rank to card52: suit*13 + (14-rank)
                     trick52 = [
-                        cur_dl.currentTrickSuit[0] * 13 + (14 - cur_dl.currentTrickRank[0]),
-                        cur_dl.currentTrickSuit[1] * 13 + (14 - cur_dl.currentTrickRank[1]),
-                        cur_dl.currentTrickSuit[2] * 13 + (14 - cur_dl.currentTrickRank[2]),
+                        cur_trick_suit[0] * 13 + (14 - cur_trick_rank[0]),
+                        cur_trick_suit[1] * 13 + (14 - cur_trick_rank[1]),
+                        cur_trick_suit[2] * 13 + (14 - cur_trick_rank[2]),
                         f_suit * 13 + (14 - f_rank),
                     ]
                     winner_offset = deck52.get_trick_winner_i(trick52, trump)
-                    dl2.first = (cur_first + winner_offset) % 4
-                    for j in range(3):
-                        dl2.currentTrickSuit[j] = 0
-                        dl2.currentTrickRank[j] = 0
+                    new_first = (cur_first + winner_offset) % 4
+                    new_trick_suit = [0, 0, 0]
+                    new_trick_rank = [0, 0, 0]
                     new_n_in_trick = 0
 
                 # Re-query with solutions=1
-                fut2 = dds_lib.futureTricks()
-                res2 = dds_lib.SolveBoardPBN(dl2, -1, 1, 1, ctypes.pointer(fut2), 0)
-                if res2 != 1 or fut2.cards == 0:
+                try:
+                    fut2 = dds3.solve_board_pbn(
+                        new_pbn,
+                        trump=trump,
+                        first=new_first,
+                        current_trick_suit=tuple(new_trick_suit),
+                        current_trick_rank=tuple(new_trick_rank),
+                        target=-1,
+                        solutions=1,
+                        mode=1,
+                    )
+                except Exception:
                     break  # DDS error, fall back to -2
+                if fut2["cards"] == 0:
+                    break
 
-                if fut2.score[0] != -2:
+                if fut2["score"][0] != -2:
                     # Resolved! Convert back to original next player's perspective.
                     # fut2 returns tricks for the resolved next player's side.
-                    resolved_next = (dl2.first + new_n_in_trick) % 4
-                    resolved_score = fut2.score[0]
+                    resolved_next = (new_first + new_n_in_trick) % 4
+                    resolved_score = fut2["score"][0]
 
                     all_remaining = sum(len(h.replace('.', '')) for h in parts)
                     rem_tricks = (all_remaining + new_n_in_trick) // 4
@@ -2551,24 +2560,25 @@ def solve_board():
                     break
 
                 # Still -2: advance to next forced play
-                cur_dl = dl2
                 cur_fut = fut2
-                cur_first = dl2.first
+                cur_first = new_first
                 cur_n_in_trick = new_n_in_trick
                 cur_pbn = new_pbn
+                cur_trick_suit = new_trick_suit
+                cur_trick_rank = new_trick_rank
                 cur_next_pos = (cur_first + cur_n_in_trick) % 4
 
         # Extract results — score is from next player's side perspective
         cards = []
-        for i in range(fut.cards):
-            score = fut.score[i]
+        for i in range(fut["cards"]):
+            score = fut["score"][i]
             if score == -2 and forced_score is not None:
                 score = forced_score
             cards.append({
-                "suit": suit_letters[fut.suit[i]],
-                "rank": rank_letters.get(fut.rank[i], str(fut.rank[i])),
+                "suit": suit_letters[fut["suit"][i]],
+                "rank": rank_letters.get(fut["rank"][i], str(fut["rank"][i])),
                 "tricks": score,
-                "equals": fut.equals[i],
+                "equals": fut["equals"][i],
                 "next_player": next_player_pos
             })
 

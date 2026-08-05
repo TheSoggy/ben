@@ -83,14 +83,23 @@ def _get_lib():
             for dds_path in candidates:
                 if os.path.isfile(dds_path):
                     ctypes.CDLL(dds_path)
-                    # NativeAOT P/Invoke looks for "dds.dll" by filename;
-                    # create a symlink next to the library so it can be resolved
-                    dds_dll_link = os.path.join(os.path.dirname(dds_path), 'dds.dll')
-                    if not os.path.exists(dds_dll_link):
-                        try:
-                            os.symlink(os.path.basename(dds_path), dds_dll_link)
-                        except OSError:
-                            pass
+                    # BGADLL's [DllImport("dds")] / NativeAOT P/Invoke resolve
+                    # the DDS library by several names depending on platform and
+                    # runtime: "dds.dll" (NativeAOT literal name), libdds.so on
+                    # Linux, libdds.dylib / dds.dylib on macOS. The vendored file
+                    # may have a versioned name (e.g. libdds.2.9.0.dylib), so
+                    # create the expected symlink(s) beside it if missing.
+                    if sys.platform == 'darwin':
+                        link_names = ['dds.dll', 'libdds.dylib', 'dds.dylib']
+                    else:
+                        link_names = ['dds.dll', 'libdds.so']
+                    for link_name in link_names:
+                        link = os.path.join(os.path.dirname(dds_path), link_name)
+                        if not os.path.exists(link):
+                            try:
+                                os.symlink(os.path.basename(dds_path), link)
+                            except OSError:
+                                pass
                     # On macOS, NativeAOT P/Invoke resolves "dds.dll" via dlopen
                     # which doesn't search relative to the calling library.
                     # Add the directory to DYLD_LIBRARY_PATH so dlopen can find it.

@@ -6,7 +6,7 @@ which implements Information-Set MCTS with UCB selection for bridge cardplay.
 
 Ace uses suit-rank card format (e.g., "HA" for Ace of Hearts).
 Ace API: Game, Engine, GameOptions, ConstraintSet, Range, Config, Player, Contract
-engine.Evaluate() returns List<Evaluation> with .Move, .Value, .Visits, .Depth
+engine.Evaluate() returns List<Evaluation> with .Move, .Winrate, .Visits, .Depth
 """
 
 import traceback
@@ -394,15 +394,30 @@ class ACEDefDLL:
     def update_missing_cards(self, missing_cards):
         for i in range(4):
             value = int(missing_cards[i])
-            idx = i * 2
-            if value < self.declarer_constraints[idx]:
-                self.declarer_constraints[idx] = value
-            if value < self.declarer_constraints[idx + 1]:
-                self.declarer_constraints[idx + 1] = value
-            if value < self.partner_constraints[idx]:
-                self.partner_constraints[idx] = value
-            if value < self.partner_constraints[idx + 1]:
-                self.partner_constraints[idx + 1] = value
+            idx = i * 2  # [idx] = min length, [idx + 1] = max length
+            dec_min = self.declarer_constraints[idx]
+            dec_max = self.declarer_constraints[idx + 1]
+            par_min = self.partner_constraints[idx]
+            par_max = self.partner_constraints[idx + 1]
+            # Neither hidden hand can hold more cards of a suit than are still
+            # out, and neither can be required to hold more than that.
+            dec_max = min(dec_max, value)
+            par_max = min(par_max, value)
+            dec_min = min(dec_min, value)
+            par_min = min(par_min, value)
+            # The two minima must also be jointly possible: together they cannot
+            # require more cards than actually remain in the suit. When they do
+            # (e.g. 1 card out but both minima are 1 -> combined 2 > 1), drop each
+            # to the count it is *forced* to hold because the other hand cannot
+            # cover it. update_voids() has already run, so a void hand's max is 0
+            # here and the surviving hand is correctly forced to hold the rest.
+            if dec_min + par_min > value:
+                dec_min = max(0, min(value - par_max, dec_max))
+                par_min = max(0, min(value - dec_max, par_max))
+            self.declarer_constraints[idx] = dec_min
+            self.declarer_constraints[idx + 1] = dec_max
+            self.partner_constraints[idx] = par_min
+            self.partner_constraints[idx + 1] = par_max
 
     def update_voids(self, shown_out_suits):
         if self.player_i == 0:
@@ -495,21 +510,40 @@ class ACEDefDLL:
             print(f"Evaluation count: {evaluations.Count}")
 
         card_result = {}
+        # Declarer tricks needed to make the contract (constant for the deal).
+        required = int(self.contract_str[0]) + 6
         for i in range(evaluations.Count):
             ev = evaluations[i]
-            reward = ev.Value
+            # From the defending engine's perspective:
+            #   Winrate = P(defeating the contract)            0..1
+            #   Utility = average undertrick margin             signed tricks (positive = declarer set)
+            # Ace's UCB only leans on the trick margin once the outcome is nearly
+            # certain, so when every defence beats the contract it picks by undertricks.
+            # Surface both, else BEN ties all setting cards at winrate=1.0 and ignores
+            # the "beat it the most" preference Ace computed.
+            winrate = ev.Winrate
+            margin = ev.Utility
             card_str = str(ev.Move)
             card52 = self._ace_card_to_ben_code(card_str)
 
+            # Convert to total defender tricks to match PIMCDef's tuple convention.
+            declarer_total = required - margin
+            defender_total = 13 - declarer_total
+            e_tricks = defender_total - self.tricks_taken             # remaining defender tricks
+            score_idx = max(0, min(13, int(round(defender_total))))
+            e_score = self.score_by_tricks_taken[score_idx]
+            e_make = winrate
+
             elapsed_ms = engine.Elapsed.TotalMilliseconds
             msg = (f"Iterations: {engine.Iterations}"
-                   f"|Win%: {reward * 100:.1f}|Visits: {ev.Visits}|Depth: {ev.Depth}"
+                   f"|Win%: {winrate * 100:.1f}|Margin: {margin:+.2f}|Visits: {ev.Visits}|Depth: {ev.Depth}"
                    f"|Time: {elapsed_ms:.0f}ms")
 
-            card_result[card52] = (round(reward, 4), round(reward * 100), round(reward, 4), msg)
+            card_result[card52] = (round(e_tricks, 2), round(e_score), round(e_make, 3), msg)
 
             if self.verbose:
-                print(f"{Card.from_code(card52)} reward:{reward:.4f} visits:{ev.Visits}")
+                print(f"{Card.from_code(card52)} win:{winrate:.4f} margin:{margin:+.2f} "
+                      f"tricks:{e_tricks:.2f} score:{e_score} visits:{ev.Visits}")
 
         return card_result
 

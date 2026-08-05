@@ -41,7 +41,7 @@
 	</head> 
 <body>
 <div class="center">
-    <h1>Play with BEN. Version 0.8.7.7</h1>
+    <h1>Play with BEN. Version 0.8.8.4</h1>
     <div style="margin-bottom: 15px;">
         <a href="/autoplay" style="padding: 8px 16px; background: #4CAF50; color: white; text-decoration: none; border-radius: 4px;">Autoplay (Generate PBN)</a>
         <a href="/api" style="padding: 8px 16px; background: #2196F3; color: white; text-decoration: none; border-radius: 4px; margin-left: 10px;">API Reference</a>
@@ -344,8 +344,9 @@ async function includeCheckboxValues(event) {
     // Pre-flight: verify the selected server port is reachable before redirecting
     const serverValue = document.getElementById('server').value;
     const serverPort = '444' + serverValue;
+    const wsProtocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
     const reachable = await new Promise((resolve) => {
-        const ws = new WebSocket('ws://localhost:' + serverPort + '/');
+        const ws = new WebSocket(wsProtocol + location.hostname + ':' + serverPort + '/');
         const timer = setTimeout(() => { ws.close(); resolve(false); }, 1500);
         ws.onopen  = () => { clearTimeout(timer); ws.close(); resolve(true); };
         ws.onerror = () => { clearTimeout(timer); resolve(false); };

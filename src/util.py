@@ -304,16 +304,36 @@ def check_file_access(file_path):
         print(f"Error checking file access: {e}")
         return False
     
+_dotnet_runtime_selected = False
+
+def _ensure_dotnet_runtime():
+    """Pick pythonnet's CLR runtime once per process.
+
+    On Windows we let pythonnet use its default (.NET Framework). On Linux/macOS
+    pythonnet would otherwise default to Mono (which BEN does not ship), so we
+    select the installed CoreCLR runtime instead - this must happen before the
+    first `import clr`. Set DOTNET_ROOT if the runtime isn't auto-discovered.
+    """
+    global _dotnet_runtime_selected
+    if _dotnet_runtime_selected or sys.platform == "win32":
+        return
+    from pythonnet import set_runtime
+    from clr_loader import get_coreclr
+    set_runtime(get_coreclr())
+    _dotnet_runtime_selected = True
+
 def load_dotnet_framework_assembly(assembly_path, verbose = False):
-    """    
+    """
     Parameters:
         assembly_path (str): The path to the .NET assembly without the `.dll` extension.
-    
+
     Returns:
         The loaded assembly reference or raises an exception on failure.
     """
     check_file_access(assembly_path + '.dll')
     try:
+        # On non-Windows, select CoreCLR before clr is first imported.
+        _ensure_dotnet_runtime()
         import clr
         if verbose:
             print(f"Loading {assembly_path}")
@@ -327,83 +347,8 @@ def load_dotnet_framework_assembly(assembly_path, verbose = False):
             print("Loaded .NET assembly using clr.AddReference")
         return None  # Assembly types can be imported directly in this mode
     except Exception as e:
-        print(f"Failed to load .NET Framework assembly '{assembly_path}': {e}")
+        print(f"Failed to load .NET assembly '{assembly_path}': {e}")
         raise RuntimeError(f"Failed to load .NET assembly '{assembly_path}': {e}")
-
-def load_dotnet_core_assembly(assembly_path, verbose = False):
-    """
-    Parameters:
-        assembly_path (str): The path to the .NET assembly without the `.dll` extension.
-
-    Returns:
-        The loaded assembly reference or raises an exception on failure.
-    """
-    import json, tempfile
-
-    if 'DOTNET_ROOT' not in os.environ:
-        dotnet_root = os.path.expanduser("~/.dotnet")
-        if os.path.isdir(dotnet_root):
-            os.environ["DOTNET_ROOT"] = dotnet_root
-
-    try:
-        if verbose:
-            print(f"Loading {assembly_path}")
-
-        # Check if pythonnet runtime is already initialized (e.g. by PYTHONNET_RUNTIME=coreclr)
-        import pythonnet
-        from pythonnet import set_runtime
-        runtime_loaded = pythonnet._RUNTIME is not None
-
-        if not runtime_loaded:
-            from clr_loader import get_coreclr
-
-            asm_name = os.path.basename(assembly_path)
-            if 'EPBot8739' in asm_name:
-                tfm, fw_ver = "net10.0", "10.0.0"
-            else:
-                tfm, fw_ver = "net9.0", "9.0.0"
-            rc = {
-                "runtimeOptions": {
-                    "tfm": tfm,
-                    "framework": {
-                        "name": "Microsoft.NETCore.App",
-                        "version": fw_ver
-                    }
-                }
-            }
-            rc_path = os.path.join(tempfile.gettempdir(), f"{asm_name}.runtimeconfig.json")
-            with open(rc_path, "w") as f:
-                json.dump(rc, f)
-
-            runtime = get_coreclr(runtime_config=rc_path)
-            set_runtime(runtime)
-
-        import clr
-
-        # Use AssemblyLoadContext for CoreCLR (works cross-platform)
-        full_path = assembly_path if assembly_path.endswith('.dll') else assembly_path + '.dll'
-        full_path = os.path.abspath(full_path)
-        import System
-        load_context = System.Runtime.Loader.AssemblyLoadContext.Default
-        load_context.LoadFromAssemblyPath(full_path)
-
-        if verbose:
-            print(f"Loaded .NET Core assembly: {assembly_path}")
-    except Exception as e:
-        asm_name = os.path.basename(assembly_path)
-        tfm = "net10.0" if 'EPBot8739' in asm_name else "net9.0"
-        msg = f"Failed to load .NET Core assembly '{assembly_path}': {e}"
-        if tfm == "net10.0":
-            msg += (
-                "\n\n.NET 10 runtime is required for this assembly."
-                "\nInstall it with:"
-                "\n  curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --runtime dotnet"
-                "\nYou also need pythonnet and clr-loader:"
-                "\n  pip install pythonnet clr-loader"
-            )
-        print(msg)
-        raise RuntimeError(msg)
-
 
 def get_pythonnet_version():
     try:
