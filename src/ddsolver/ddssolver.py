@@ -62,11 +62,12 @@ class DDSSolver:
         remaining = sum(1 for c in pbn if c not in '. ')
         return (52 - remaining - len(current_trick)) // 4 + 1
 
-    def solve(self, strain_i, leader_i, current_trick, hands_pbn, solutions):
+    def solve(self, strain_i, leader_i, current_trick, hands_pbn, solutions, purpose=""):
         if self._fallback:
-            return self._fallback.solve(strain_i, leader_i, current_trick, hands_pbn, solutions)
+            return self._fallback.solve(strain_i, leader_i, current_trick, hands_pbn, solutions, purpose)
         trick = self._trick_number(hands_pbn, current_trick)
-        with ModelTimer.time_call(f'ddss_solve_t{trick:02d}', items=len(hands_pbn)):
+        label = f'ddss_solve_t{trick:02d}_{purpose}' if purpose else f'ddss_solve_t{trick:02d}'
+        with ModelTimer.time_call(label, items=len(hands_pbn)):
             results = self._solve_helper(strain_i, leader_i, current_trick,
                                          hands_pbn[:ddss.MAXNOOFBOARDS], solutions)
             if len(hands_pbn) > ddss.MAXNOOFBOARDS:
