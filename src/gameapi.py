@@ -74,6 +74,7 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from threading import BoundedSemaphore, Lock
 
+import health
 from observability import BEN_PLAY_PHASE, lock_timed, phase_timed
 from nn.timing import ModelTimer
 
@@ -932,6 +933,35 @@ def metrics():
     from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
     return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+
+@app.route('/health')
+@limiter.exempt
+def health_check():
+    """Solver-exercising health check — see health.py for the fixture.
+
+    200 only when a real double-dummy solve through the bot-path
+    DDSSolver wrapper returns the expected answer; 503 otherwise. `/`
+    stayed 200 through the 2026-08-05 solver outage, so reachability
+    alone must never make this endpoint green. Consumers: the Dockerfile
+    HEALTHCHECK, the Kamal accessory health-cmd, docker-compose, and
+    Bridgearena's BenProbe (every 30-60s each — the solve is a 3-card
+    endgame, well under a millisecond).
+
+    limiter-exempt like /metrics: probes are internal-network cadence
+    traffic and must never 429 into a false unhealthy.
+
+    On success the body deliberately contains no "error" key —
+    scripts/smoke/ben-endpoints.sh greps 200-bodies for that substring
+    and treats a match as a broken endpoint.
+    """
+    report = health.run_health_check(dds)
+
+    if report["ok"]:
+        return jsonify({"status": "ok", "leader": report["leader"], "elapsed_ms": report["elapsed_ms"]})
+
+    return jsonify({"status": "unhealthy", "error": report["error"], "leader": report["leader"]}), 503
+
 
 @app.route('/bid')
 def bid():

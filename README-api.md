@@ -59,6 +59,33 @@ These parameters are used across multiple endpoints:
 
 ## Endpoints
 
+### `/health` - Solver-Exercising Health Check
+
+Runs a minimal double-dummy solve (a fixed three-card endgame) through the
+same `DDSSolver` call path the play/lead/claim endpoints use, and returns
+200 only when the solver produces the known-correct answer. A reachability
+probe on `/` cannot see a solver-only outage — `/` stayed 200 through the
+2026-08-05 incident while every double-dummy endpoint was failing.
+
+The leader seat rotates N→E→S→W across calls so consecutive probes are
+distinct solves. Exempt from rate limiting. Cost is well under a
+millisecond per call.
+
+**Example Request:**
+```
+GET /health
+```
+
+**Response (healthy, 200):**
+```json
+{"status": "ok", "leader": 2, "elapsed_ms": 0.4}
+```
+
+**Response (unhealthy, 503):**
+```json
+{"status": "unhealthy", "error": "solve raised TypeError: ...", "leader": 3}
+```
+
 ### `/bid` - Get Bid Recommendation
 
 Returns the recommended bid for a given hand and auction state.

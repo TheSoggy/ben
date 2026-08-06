@@ -85,7 +85,9 @@ RUN ln -sf /usr/lib/x86_64-linux-gnu/libboost_thread.so.1.83.0 /usr/lib/x86_64-l
 
 EXPOSE 8085
 
+# /health runs a real double-dummy solve (see src/health.py) — `/` stays
+# 200 through a solver-only outage and proved it on 2026-08-05.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -f http://localhost:8085/ || exit 1
+  CMD curl -f http://localhost:8085/health || exit 1
 
 CMD ["gunicorn", "--config", "gunicorn.conf.py", "gameapi:app"]
