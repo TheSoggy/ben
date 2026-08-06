@@ -958,9 +958,9 @@ def health_check():
     report = health.run_health_check(dds)
 
     if report["ok"]:
-        return jsonify({"status": "ok", "leader": report["leader"], "elapsed_ms": report["elapsed_ms"]})
+        return jsonify({"status": "ok", "elapsed_ms": report["elapsed_ms"]})
 
-    return jsonify({"status": "unhealthy", "error": report["error"], "leader": report["leader"]}), 503
+    return jsonify({"status": "unhealthy", "error": report["error"]}), 503
 
 
 @app.route('/bid')

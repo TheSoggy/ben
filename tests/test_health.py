@@ -51,33 +51,20 @@ class RecordingSolver:
 
 
 @pytest.mark.unit
-def test_real_solver_reports_healthy_for_every_leader() -> None:
+@pytest.mark.parametrize("leader", [0, 1, 2, 3])
+def test_real_solver_reports_healthy_from_every_seat(leader) -> None:
     """A live DDS solve answers the fixture correctly from all four seats.
 
-    Four calls so the leader rotation wraps through N, E, S and W — the
-    fixture is symmetric, so the expected answer is the same everywhere.
+    Production always solves with the default leader; parametrizing here
+    proves the fixture's claimed symmetry rather than trusting it.
     """
     solver = DDSSolver(max_threads=1)
 
-    for _ in range(4):
-        report = run_health_check(solver)
-        assert report["error"] is None
-        assert report["ok"] is True
-        assert report["elapsed_ms"] >= 0
+    report = run_health_check(solver, leader=leader)
 
-
-@pytest.mark.unit
-def test_leader_rotates_between_calls() -> None:
-    """Consecutive probes solve from different seats (cache-busting)."""
-    solver = RecordingSolver()
-
-    for _ in range(5):
-        run_health_check(solver)
-
-    leaders = [call["leader_i"] for call in solver.calls]
-    assert sorted(set(leaders)) == [0, 1, 2, 3]
-    # Consecutive calls never repeat a seat.
-    assert all(a != b for a, b in zip(leaders, leaders[1:]))
+    assert report["error"] is None
+    assert report["ok"] is True
+    assert report["elapsed_ms"] >= 0
 
 
 @pytest.mark.unit
@@ -94,6 +81,7 @@ def test_solve_called_through_the_bot_path_contract() -> None:
 
     [call] = solver.calls
     assert call["strain_i"] == 0  # notrump
+    assert call["leader_i"] == 0  # production default
     assert call["current_trick"] == []
     assert call["hands_pbn"] == [HEALTH_PBN]
     assert call["solutions"] == 3

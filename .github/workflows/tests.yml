@@ -1,0 +1,30 @@
+name: Tests
+
+# The tests/ suite guards the DDSSolver call contract — the exact
+# purpose= signature drift that took out /play, /lead and /claim in
+# production on 2026-08-05 — plus the /health solve fixture and the
+# observability helpers. None of it needs TensorFlow: collection pulls
+# in numpy/colorama/prometheus_client only, and the real-solver test
+# loads bin/libdds.so, which ships in-repo for x86-64 Linux.
+
+on:
+  push:
+    branches: [dds29-stable, main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest numpy colorama prometheus_client
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
