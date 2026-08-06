@@ -23,6 +23,24 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install native solver dependencies
+        # bin/libdds.so was compiled against boost 1.74 sonames; the
+        # runner ships a newer boost. Same compat-symlink trick as the
+        # Dockerfile (lines ~79-84), made version-agnostic. libdds-dev
+        # doubles as the system fallback dds.py loads if the repo's
+        # binary still fails.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            libboost-thread-dev libboost-system-dev \
+            libboost-date-time-dev libboost-chrono-dev libdds-dev
+          for lib in thread system date_time chrono; do
+            real=$(ls /usr/lib/x86_64-linux-gnu/libboost_${lib}.so.1.* 2>/dev/null | sort -V | tail -1)
+            if [ -n "$real" ]; then
+              sudo ln -sf "$real" "/usr/lib/x86_64-linux-gnu/libboost_${lib}.so.1.74.0"
+            fi
+          done
+
       - name: Install test dependencies
         run: pip install pytest numpy colorama prometheus_client
 
