@@ -935,18 +935,34 @@ def metrics():
     return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
 
 
+def _health_bot_factory():
+    """Build one EPBot the way BBABotBid.__init__ does, for /health.
+
+    Imported lazily and per call, matching every other BBA call-site in
+    this module: `get_dll` caches the loaded assembly, so the cost here
+    is one .NET construction, not a DLL load.
+    """
+    from bba.BBA import BBABotBid
+
+    return BBABotBid.get_dll()["EPBot"]()
+
+
 @app.route('/health')
 @limiter.exempt
 def health_check():
-    """Solver-exercising health check — see health.py for the fixture.
+    """Solver- and bot-exercising health check — see health.py for the fixtures.
 
     200 only when a real double-dummy solve through the bot-path
-    DDSSolver wrapper returns the expected answer; 503 otherwise. `/`
-    stayed 200 through the 2026-08-05 solver outage, so reachability
-    alone must never make this endpoint green. Consumers: the Dockerfile
-    HEALTHCHECK, the Kamal accessory health-cmd, docker-compose, and
-    Bridgearena's BenProbe (every 30-60s each — the solve is a 3-card
-    endgame, well under a millisecond).
+    DDSSolver wrapper returns the expected answer *and* an EPBot
+    constructs; 503 otherwise. `/` stayed 200 through the 2026-08-05
+    solver outage and a solve-only /health stayed 200 through the
+    2026-08-13 EPBot outage, so neither reachability nor a working
+    solver may make this endpoint green on its own. Consumers: the
+    Dockerfile HEALTHCHECK, the Kamal accessory health-cmd,
+    docker-compose, and Bridgearena's BenProbe (every 30-60s each — the
+    solve is a 3-card endgame and the bot is one constructor, together
+    ~0.3ms warm. The first probe after boot also pays the one-time EPBot
+    assembly load, ~210ms, well inside every consumer's timeout).
 
     limiter-exempt like /metrics: probes are internal-network cadence
     traffic and must never 429 into a false unhealthy.
@@ -955,7 +971,7 @@ def health_check():
     scripts/smoke/ben-endpoints.sh greps 200-bodies for that substring
     and treats a match as a broken endpoint.
     """
-    report = health.run_health_check(dds)
+    report = health.run_health_check(dds, bot_factory=_health_bot_factory)
 
     if report["ok"]:
         return jsonify({"status": "ok", "elapsed_ms": report["elapsed_ms"]})
