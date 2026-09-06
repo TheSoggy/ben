@@ -26,9 +26,12 @@ install/
 scripts/
 training/
 demo/
+# Not needed by either Docker image — keep them out of the build context
+Practice/
 Boards/
 Challenges/
 logs/
+# models/ - included for Docker build
 conda_setup.sh
 
 # Database files
