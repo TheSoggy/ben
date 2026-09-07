@@ -15,12 +15,19 @@ RUN apt-get update && \
     update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# .NET 10 runtime for ACE (CoreCLR) — libicu is required for .NET globalization
-# EPBot no longer needs it (native libEPBot.so since BBA 8740), but ACE/PIMC still load .NET assemblies.
-RUN apt-get -y install curl libicu70 && \
-    curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --runtime dotnet --install-dir /usr/share/dotnet && \
-    ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet && \
-    apt-get clean
+# .NET 10 runtime for ACE/PIMC (CoreCLR). EPBot no longer needs it — it is a
+# native library since BBA 8740 — but ACE and PIMC still load .NET assemblies.
+#
+# Deliberately no `apt-get install libicu*` here, though upstream's line has one.
+# Two reasons it cannot work in this image: the preceding layer ends with
+# `rm -rf /var/lib/apt/lists/*`, so apt can locate no package at all without an
+# `apt-get update` first; and upstream names `libicu70`, which is Ubuntu 22.04's
+# package, while this image is `ubuntu:24.04` and carries libicu74 already.
+# .NET globalization is satisfied by that. Taking upstream's line verbatim broke
+# the deploy on 2026-09-07 with `E: Unable to locate package libicu70`.
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin \
+      --channel 10.0 --runtime dotnet --install-dir /usr/share/dotnet && \
+    ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PYTHONNET_RUNTIME=coreclr
 
