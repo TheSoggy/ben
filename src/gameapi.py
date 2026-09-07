@@ -670,6 +670,16 @@ if models.use_bba or models.use_bba_to_count_aces or models.consult_bba or model
         models.consult_bba = False
         models.use_bba_rollout = False
 
+# The convention cards this server offers are checked here, once, so a card
+# missing from the image or corrupted in it is a boot failure naming the file
+# rather than a 500 the first time somebody plays that system. `BBA.load_ccs`
+# raises now rather than exiting, which is what makes a boot-time check the
+# right place for this: without it the first failure would be a request.
+if models.use_bba:
+    from bba import cc_registry
+    cc_registry.verify_all()
+    print(f"Convention cards: {', '.join(cc_registry.keys())}")
+
 if models.use_suitc:
     try:
         from suitc.SuitC import SuitCLib
@@ -979,6 +989,21 @@ def health_check():
     return jsonify({"status": "unhealthy", "error": report["error"]}), 503
 
 
+@app.route('/systems')
+@limiter.exempt
+def systems():
+    """The convention card keys this server will accept on `file_us`/`file_them`.
+
+    Exists so the two whitelists — this one and the caller's — can be compared
+    rather than trusted to have stayed in step. `scripts/smoke/ben-endpoints.sh`
+    reads it; limiter-exempt for the same reason `/health` is, being cadence
+    traffic from inside the network.
+    """
+    from bba import cc_registry
+
+    return jsonify({"systems": cc_registry.keys()})
+
+
 @app.route('/bid')
 def bid():
     try:
@@ -1024,7 +1049,15 @@ def bid():
             print("Auction: ",auction)
         if models.use_bba:
             from bba.BBA import BBABotBid
-            hint_bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, hand, vuln, dealer_i, mp, verbose)
+            from bba import cc_registry
+            # Local variables, never written back onto `models`: this is
+            # per-request and `models` is shared by every request the worker is
+            # serving. (The `models.matchpoint = mp` above is the pattern not to
+            # copy — it is a cross-request race already, and one player's
+            # convention card bidding another player's hand would be a worse one.)
+            file_us = cc_registry.resolve(request.args.get("file_us"), models.bba_our_cc)
+            file_them = cc_registry.resolve(request.args.get("file_them"), models.bba_their_cc)
+            hint_bot = BBABotBid(file_us, file_them, position_i, hand, vuln, dealer_i, mp, verbose)
             explanations = None
         else:
 
@@ -1424,9 +1457,15 @@ def explain():
     position_i = dealer_enum[seat]
     dealer = request.args.get("dealer")
     dealer_i = dealer_enum[dealer]
+    from bba import cc_registry
+    # An explanation must be read against the card the auction was *bid* under,
+    # so the caller passes the table's pair here exactly as it does to `/bid`.
+    # Local variables for the same reason they are there.
+    file_us = cc_registry.resolve(request.args.get("file_us"), models.bba_our_cc)
+    file_them = cc_registry.resolve(request.args.get("file_them"), models.bba_their_cc)
     if verbose:
-        print("models.bba_our_cc", models.bba_our_cc, "models.bba_their_cc", models.bba_their_cc)
-    bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, mp, verbose)
+        print("file_us", file_us, "file_them", file_them)
+    bot = BBABotBid(file_us, file_them, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, mp, verbose)
     ctx = request.args.get("ctx")
     bids = parse_ctx_to_bids(ctx)
 
@@ -1457,9 +1496,15 @@ def explain_auction():
     position_i = dealer_enum[seat]
     dealer = request.args.get("dealer")
     dealer_i = dealer_enum[dealer]
+    from bba import cc_registry
+    # An explanation must be read against the card the auction was *bid* under,
+    # so the caller passes the table's pair here exactly as it does to `/bid`.
+    # Local variables for the same reason they are there.
+    file_us = cc_registry.resolve(request.args.get("file_us"), models.bba_our_cc)
+    file_them = cc_registry.resolve(request.args.get("file_them"), models.bba_their_cc)
     if verbose:
-        print("models.bba_our_cc", models.bba_our_cc, "models.bba_their_cc", models.bba_their_cc)
-    bot = BBABotBid(models.bba_our_cc, models.bba_their_cc, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, mp, verbose)
+        print("file_us", file_us, "file_them", file_them)
+    bot = BBABotBid(file_us, file_them, position_i, "KJ53.KJ7.AT92.K5", vuln, dealer_i, mp, verbose)
     ctx = request.args.get("ctx")
     bids = parse_ctx_to_bids(ctx)
 
@@ -1483,18 +1528,15 @@ def explain_auction():
 @limiter.limit("10000/hour;100/minute", exempt_when=is_internal_request)
 def bids():
     t_start = time.time()
-    base_path = os.getenv('BEN_HOME') or '..'
-    file_us = request.args.get("file_us")
-    file_them = request.args.get("file_them")
-    if not file_us:
-        file_us = models.bba_our_cc
-    else:
-        file_us = os.path.join(base_path,"BBA/CC/" + file_us)
-    if not file_them:
-        file_them = models.bba_their_cc
-    else:
-        file_them = os.path.join(base_path,"BBA/CC/" + file_them)
-        
+    # Through the registry, never joined onto a path. This used to be
+    # `os.path.join(base_path, "BBA/CC/" + request.args.get("file_us"))`, which
+    # walks out of the directory on `../` for the asking and — because
+    # `load_ccs` exited the process on a file it could not open — took the
+    # worker with it. See `bba/cc_registry.py`.
+    from bba import cc_registry
+    file_us = cc_registry.resolve(request.args.get("file_us"), models.bba_our_cc)
+    file_them = cc_registry.resolve(request.args.get("file_them"), models.bba_their_cc)
+
     from bba.BBA import BBABotBid
     if verbose:
         print("file_us", file_us, "file_them", file_them)

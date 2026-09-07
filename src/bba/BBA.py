@@ -311,7 +311,11 @@ class BBABotBid:
                         print("Make sure the library exists and is not blocked by the OS (Properties > Unblock)")
                         print(f"Make sure the library is not write-protected{Fore.RESET}")
                         print('Error:', ex)
-                        sys.exit(1)
+                        # Raise, do not exit. This runs inside a request, so
+                        # `sys.exit(1)` here kills the gunicorn worker serving it
+                        # and every other request that worker is holding. See the
+                        # note on `load_ccs`.
+                        raise RuntimeError(f"Unable to load EPBot from {EPBot_NATIVE_PATH}") from ex
         return cls._dll_loaded
     
 
@@ -419,47 +423,46 @@ class BBABotBid:
         return self.bid(auction)
 
     def load_ccs(self):
-        # Initialize the dictionary to store the conventions
-        their_conventions = {}
+        """Read both convention cards, or raise.
 
-        try:
-            # Open the file and process each line
-            with open(self.their_system_file, 'r') as file:
-                for i, line in enumerate(file):
-                    # Split the line into key and value
-                    key, value = line.strip().split(' = ')
-                    # Special case for the first line (System type)
-                    if i == 0 and key == "System type":
-                        cc = int(value)  # Store the value as an integer
-                        self.their_system = cc
-                    else:
-                        # Convert other values to boolean (1 -> True, 0 -> False)
-                        their_conventions[key] = bool(int(value))
-        except:
-            print(f"{Fore.RED}Error: Unable to load {self.their_system_file}{Style.RESET_ALL}")
-            sys.exit(1)
-
-        our_conventions = {}
-
-        try:
-            # Open the file and process each line
-            with open(self.our_system_file, 'r') as file:
-                for i, line in enumerate(file):
-                    # Split the line into key and value
-                    key, value = line.strip().split(' = ')
-                    
-                    # Special case for the first line (System type)
-                    if i == 0 and key == "System type":
-                        cc = int(value)  # Store the value as an integer
-                        self.our_system = cc
-                    else:
-                        # Convert other values to boolean (1 -> True, 0 -> False)
-                        our_conventions[key] = bool(int(value))
-        except:
-            print(f"{Fore.RED}Error: Unable to load {self.their_system_file}{Style.RESET_ALL}")
-            sys.exit(1)
+        **This raises rather than calling `sys.exit(1)`, and that is the point.**
+        Upstream exits the process on any failure to open *or parse* either file.
+        `BBABotBid` is constructed per request, so that turned a bad card name
+        into a remotely triggerable kill of the gunicorn worker — every other
+        request it was serving with it — and turned a card missing from the
+        image into runtime suicide instead of a boot failure. Raising makes the
+        first a 500 and the second something `cc_registry.verify_all()` catches
+        at boot. This diverges from upstream deliberately.
+        """
+        their_conventions, self.their_system = self.read_cc(self.their_system_file)
+        our_conventions, self.our_system = self.read_cc(self.our_system_file)
 
         return our_conventions, their_conventions
+
+    @staticmethod
+    def read_cc(path):
+        """One convention card as `({convention: bool}, system_type)`.
+
+        The first line is `System type = N` and is the only line that is not a
+        convention; every other line is `key = 0` or `key = 1`.
+        """
+        conventions = {}
+        system = -1
+
+        try:
+            with open(path, 'r') as file:
+                for i, line in enumerate(file):
+                    key, value = line.strip().split(' = ')
+
+                    if i == 0 and key == "System type":
+                        system = int(value)
+                    else:
+                        conventions[key] = bool(int(value))
+        except Exception as ex:
+            print(f"{Fore.RED}Error: Unable to load {path}{Style.RESET_ALL}")
+            raise RuntimeError(f"Unable to load convention card {path}") from ex
+
+        return conventions, system
 
 
     def is_key_card_ask(self, auction, explanation):
