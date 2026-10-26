@@ -9,7 +9,7 @@ tqdm
 
 websockets>=15.0.1
 
-keras==3.15.1
+keras==3.15.0
 tensorflow==2.21.0
 grpcio-tools
 
