@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+from nn.keras_compat import load_model
 from nn.timing import ModelTimer
 
 class Bidder:
