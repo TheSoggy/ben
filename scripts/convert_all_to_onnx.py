@@ -354,7 +354,7 @@ def main():
 
     # ========== Lead Models (already done, but include for completeness) ==========
     results['lead_suit'] = convert_dual_input_model(
-        keras_path=os.path.join(tf2_dir, 'Lead-Suit_2024-11-04-E200.keras'),
+        keras_path=os.path.join(tf2_dir, 'Lead-Suit_2024-11-04-E200-v2.keras'),
         onnx_path=os.path.join(onnx_dir, 'lead_suit.onnx'),
         x_shape=[None, 42],
         b_shape=[None, 15],
@@ -364,7 +364,7 @@ def main():
     )
 
     results['lead_nt'] = convert_dual_input_model(
-        keras_path=os.path.join(tf2_dir, 'Lead-NT_2024-11-04-E200.keras'),
+        keras_path=os.path.join(tf2_dir, 'Lead-NT_2024-11-04-E200-v2.keras'),
         onnx_path=os.path.join(onnx_dir, 'lead_nt.onnx'),
         x_shape=[None, 42],
         b_shape=[None, 15],
