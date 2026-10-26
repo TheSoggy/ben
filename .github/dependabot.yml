@@ -1,0 +1,39 @@
+# Security updates only, against dds29-stable: the branch BridgeArena's
+# engines/ben gitlink tracks and the one its production image is built from.
+# Dependabot opens security PRs against the default branch alone, which is why
+# dds29-stable is the default branch rather than main.
+#
+# `open-pull-requests-limit: 0` is what makes it security-only: the limit caps
+# version-update PRs, and security-update PRs ignore it. A merged fix reaches
+# production through BridgeArena's own Dependabot, which proposes the gitlink
+# bump to this branch's tip.
+#
+# requirements.txt leaves most packages unpinned, so an image rebuild already
+# picks up their fixes; the alerts that matter here are the pinned ones
+# (tensorflow, keras, numpy, psutil).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 0
+    groups:
+      pip-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # No docker entry: the base is `ubuntu:24.04`, a tag Canonical re-publishes
+  # with each security refresh, so a rebuild already takes the fix. The only
+  # bumps Dependabot could offer are 24.10 or 26.04, interim or next-LTS
+  # releases that move the system Python and are a person's decision.
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 0
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
