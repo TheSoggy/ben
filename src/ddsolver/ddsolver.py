@@ -30,6 +30,7 @@ class DDSolver:
         # taking into account the number of processor cores and available memory.
         # On Linux/Mac, SetMaxThreads should always be called (0 = auto-configure).
         dds.SetMaxThreads(max_threads)
+        self.max_threads = max_threads
         if verbose:
             sys.stderr.write(f"DDSolver being loaded version {self.version()} - dds mode {dds_mode} - max threads {max_threads}\n")
         self.dds_mode = dds_mode
@@ -304,7 +305,7 @@ class DDSolver:
                                 card_results[eq_card].append(card_data['score'])
             return card_results
 
-        res = dds.SolveAllBoards(ctypes.pointer(bo), ctypes.pointer(solved))
+        res = dds.solve_all_boards(ctypes.pointer(bo), ctypes.pointer(solved), self.max_threads)
         if res != 1:
             error_message = dds.get_error_message(res)
             print(f"{Fore.RED}Error Code: {res}, Error Message: {error_message} {hands_pbn[0].encode('utf-8')} {current_trick} {leader_i}{Style.RESET_ALL}")

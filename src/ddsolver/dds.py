@@ -17,9 +17,8 @@ limitations under the License."""
 import sys
 import os.path
 import platform
-import struct
 
-from ctypes import cdll, Structure, c_int, c_uint, c_char, c_char_p, POINTER, create_string_buffer
+from ctypes import cdll, Structure, c_int, c_uint, c_char, c_char_p, POINTER
 
 """ environment support
                 Platform / Processor()
@@ -70,15 +69,19 @@ except:  # could be mac/linux on aarch64
 
 
 def library_version():
-    """The loaded library's own version, e.g. "3.1.0", so a log names the DDS actually
-    in use rather than the one this wrapper was written for.
+    """The loaded library's version, e.g. "3.1.0", so a log names the DDS actually in
+    use rather than the one this wrapper was written for. scripts/build_libdds.sh
+    writes it beside the library; without that file it is the 2.9.0 this wrapper
+    shipped with.
 
-    DDSInfo starts with int major, minor, patch, and what follows differs between
-    versions, so GetDDSInfo writes into a buffer larger than any of them."""
-    info = create_string_buffer(4096)
-    dds.GetDDSInfo(info)
-    major, minor, patch = struct.unpack_from("iii", info.raw)
-    return f"{major}.{minor}.{patch}"
+    Not GetDDSInfo: in DDS 3.1, after SetMaxThreads, it reads per-thread memory past
+    the end of the one thread the library keeps, and segfaults depending on what
+    else is on the heap (every time under DDSolver's imports)."""
+    try:
+        with open(DDS_PATH + ".version") as f:
+            return f.read().split()[0]
+    except OSError:
+        return "2.9.0"
 
 
 DDS_VERSION = 20900    
@@ -321,6 +324,21 @@ SolveAllBoards = dds.SolveAllBoards
 pointer to struct solvedBoards * solvedp"""
 SolveAllBoards.argtypes = [POINTER(boardsPBN), POINTER(solvedBoards)]
 SolveAllBoards.restype = c_int
+
+# DDS 3.x keeps SetMaxThreads as a no-op and runs SolveAllBoards on as many threads as
+# the hardware has; the cap moved to SolveAllBoardsN, per call. 2.9 has no
+# SolveAllBoardsN and honours SetMaxThreads.
+SolveAllBoardsN = getattr(dds, "SolveAllBoardsN", None)
+if SolveAllBoardsN is not None:
+    SolveAllBoardsN.argtypes = [POINTER(boardsPBN), POINTER(solvedBoards), c_int]
+    SolveAllBoardsN.restype = c_int
+
+
+def solve_all_boards(bop, solvedp, max_threads):
+    """SolveAllBoards with dds_max_threads honoured on either DDS (0 = automatic)."""
+    if SolveAllBoardsN is not None:
+        return SolveAllBoardsN(bop, solvedp, max_threads)
+    return SolveAllBoards(bop, solvedp)
 
 SolveAllChunks = dds.SolveAllChunks
 """pointer to struct boardsPBN * bop

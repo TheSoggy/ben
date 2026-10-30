@@ -24,4 +24,6 @@ docker run --rm --network host -e https_proxy -e HTTPS_PROXY \
       $(find /dds/library/src -name "*.cpp" | sort) -o /out/libdds.so
     strip --strip-unneeded /out/libdds.so'
 cp "$WORK/out/libdds.so" "$ROOT/bin/libdds.so"
+# The wrapper reads its version from here (src/ddsolver/dds.py, library_version).
+echo "${TAG#v} dds-bridge/dds $TAG $(git -C "$WORK/dds" rev-parse --short HEAD)" > "$ROOT/bin/libdds.so.version"
 echo "bin/libdds.so built from dds-bridge/dds $TAG ($(git -C "$WORK/dds" rev-parse --short HEAD))"
