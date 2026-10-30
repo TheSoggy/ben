@@ -11,7 +11,7 @@ class Claimer:
         self.verbose = verbose
         self.dd = ddsolver
 
-    def claimcheck(self, strain_i, player_i, hands52, tricks52, claim_cards, shown_out_suits, missing_cards, current_trick, n_samples, tricks):
+    def claimcheck(self, strain_i, player_i, hands52, tricks52, claim_cards, shown_out_suits, missing_cards, current_trick, n_samples, tricks, rng):
         # If any voids we will not manipulate the suit, as we can take finesses if needed
         # We remove any intermediate cards, so there is no finesse 
         hidden_cards = []
@@ -120,8 +120,11 @@ class Claimer:
         # Ensure the number of requested samples doesn't exceed available combinations
         n_possible_samples = min(n_samples, len(card_combinations))
 
-        # Select unique samples without replacement
-        unique_combinations = random.sample(card_combinations, n_possible_samples)
+        # Select unique samples without replacement, from the caller's per-request generator:
+        # a card failing on any sampled layout is penalised, so a sample drawn from an
+        # unseeded global RNG let one /play request return different cards.
+        sample_indexes = rng.choice(len(card_combinations), n_possible_samples, replace=False)
+        unique_combinations = [card_combinations[i] for i in sample_indexes]
 
         for combination in unique_combinations:
 

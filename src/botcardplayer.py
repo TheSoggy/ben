@@ -911,6 +911,7 @@ class CardPlayer:
                     current_trick=current_trick,
                     n_samples=50,
                     tricks=claim_tricks,
+                    rng=self.get_random_generator(),
                 )
                 claim_cards = [card for card in claim_cards if card not in bad_play]
                 # If no claim card left, then we won't adjust bad_play cards
@@ -1054,6 +1055,7 @@ class CardPlayer:
                     current_trick=current_trick,
                     n_samples=50,
                     tricks=claim_tricks,
+                    rng=self.get_random_generator(),
                 )
                 claim_cards = [card for card in claim_cards if card not in bad_play]
                 # If no claim card left, then we won't adjust bad_play cards
