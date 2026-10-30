@@ -17,8 +17,9 @@ limitations under the License."""
 import sys
 import os.path
 import platform
+import struct
 
-from ctypes import cdll, Structure, c_int, c_uint, c_char, c_char_p, POINTER
+from ctypes import cdll, Structure, c_int, c_uint, c_char, c_char_p, POINTER, create_string_buffer
 
 """ environment support
                 Platform / Processor()
@@ -66,6 +67,19 @@ except:  # could be mac/linux on aarch64
         raise Exception("Could not load DDS library")
 
 #sys.stderr.write(f"Loaded lib { os.path.basename(DDS_PATH)}\n")
+
+
+def library_version():
+    """The loaded library's own version, e.g. "3.1.0", so a log names the DDS actually
+    in use rather than the one this wrapper was written for.
+
+    DDSInfo starts with int major, minor, patch, and what follows differs between
+    versions, so GetDDSInfo writes into a buffer larger than any of them."""
+    info = create_string_buffer(4096)
+    dds.GetDDSInfo(info)
+    major, minor, patch = struct.unpack_from("iii", info.raw)
+    return f"{major}.{minor}.{patch}"
+
 
 DDS_VERSION = 20900    
 
