@@ -871,6 +871,7 @@ class BotBid:
                 return [CandidateBid(bid=bba_bid_resp.bid, insta_score=1, alert = True, who="BBA - Keycard response", explanation=bba_bid_resp.explanation)], False
 
         bid_softmax, alerts = self.next_bid_np(auction)
+        original_softmax = bid_softmax.copy()
 
         #print(bid_softmax, alerts)
 
@@ -975,13 +976,24 @@ class BotBid:
             # set the score for the bid just processed to zero so it is out of the loop
             bid_softmax[bid_i] = 0
 
+        # If the NN put its weight on illegal bids, every legal bid can be below 0.01
+        # and the loop above ends empty-handed. Fall back to the best legal bid.
+        if len(candidates) == 0:
+            for bid_i in np.argsort(-original_softmax):
+                if bidding.can_bid(bidding.ID2BID[bid_i], auction):
+                    if not self.models.suppress_warnings:
+                        sys.stderr.write(f"No candidate above 0.01 for {'-'.join(auction).replace('PASS', 'P').replace('PAD_START-', '')} with {self.hand_str}, using best legal bid {bidding.ID2BID[bid_i]} ({original_softmax[bid_i]:.4f})\n")
+                    alert = alerts[0] > self.models.alert_threshold if self.models.alert_supported else None
+                    candidates.append(CandidateBid(bid=bidding.ID2BID[bid_i], insta_score=original_softmax[bid_i], alert = alert))
+                    break
+
         # Adding an PASS, as a possible bid, even if it is not suggested by the nn
         if self.models.eval_pass_after_bid_count > 0 and no_bids > self.models.eval_pass_after_bid_count:
             for candidate in candidates:
                 if candidate.bid == 'PASS':
                     break
             else:
-                candidates.append(CandidateBid(bid=bidding.ID2BID[2], insta_score=0.1, alert = None, Who = "Config", explanation = "Pass after bid count"))
+                candidates.append(CandidateBid(bid=bidding.ID2BID[2], insta_score=0.1, alert = None, who = "Config", explanation = "Pass after bid count"))
 
         if self.verbose:
             print("\n".join(str(bid) for bid in candidates))
