@@ -1,5 +1,6 @@
 import time
 import deck52
+import random
 import numpy as np
 from itertools import combinations
 from math import comb
