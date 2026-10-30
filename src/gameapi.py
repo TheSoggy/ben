@@ -800,6 +800,29 @@ class PrefixedTimedRotatingFileHandler(TimedRotatingFileHandler):
         self.mode = 'a'
         self.stream = self._open()
 
+def deal_problem(hand_str, dummy_str, cards):
+    # Why the hand, dummy and played cards cannot be one deal, or None. Checked before
+    # anything reaches DDS, which rejects a duplicated card with an error the caller
+    # would only see as a failed solve.
+    holder = {}
+    for who, hand in (("hand", hand_str), ("dummy", dummy_str)):
+        suits = hand.split('.')
+        if len(suits) != 4:
+            return f"{who} {hand} should have 4 suits"
+        for suit, holding in zip("SHDC", suits):
+            for rank in holding.upper():
+                card = suit + rank
+                if card in holder:
+                    where = f"twice in {who}" if holder[card] == who else f"in both {holder[card]} and {who}"
+                    return f"{card} is {where}"
+                holder[card] = who
+    upper = [card.upper() for card in cards]
+    for card in set(upper):
+        if upper.count(card) > 1:
+            return f"{card} is played twice"
+    return None
+
+
 def get_random_generator(hand):
     hash_integer  = calculate_seed(hand)         
     return np.random.default_rng(hash_integer)
@@ -1224,6 +1247,12 @@ def play():
             print(result)
             return json.dumps(result)
 
+        problem = deal_problem(hand_str, dummy_str, cards)
+        if problem:
+            result = {"error": f"Not a possible deal: {problem}"}
+            print(result)
+            return json.dumps(result), 400
+
         if len(dummy_str) != 16:
             result = {"message":"Dummy should have 13 cards"}
             print(result)
@@ -1642,6 +1671,12 @@ def claim():
             result = {"message":"No dummy provided"}
             print(result)
             return json.dumps(result)
+
+        problem = deal_problem(hand_str, dummy_str, cards)
+        if problem:
+            result = {"error": f"Not a possible deal: {problem}"}
+            print(result)
+            return json.dumps(result), 400
 
         seat = request.args.get("seat")
         # Vulnerability (absolute format: None, NS, EW, All/Both)
