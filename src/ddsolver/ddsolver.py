@@ -31,7 +31,7 @@ class DDSolver:
         # On Linux/Mac, SetMaxThreads should always be called (0 = auto-configure).
         dds.SetMaxThreads(max_threads)
         if verbose:
-            sys.stderr.write(f"DDSolver being loaded version 2.9.0 - dds mode {dds_mode} - max threads {max_threads}\n")
+            sys.stderr.write(f"DDSolver being loaded version {self.version()} - dds mode {dds_mode} - max threads {max_threads}\n")
         self.dds_mode = dds_mode
         # No-op unless --ddsrecord / BEN_DDS_RECORD asked for a recording. If the
         # entry point already opened one, this just labels it with the DDS build
@@ -39,8 +39,8 @@ class DDSolver:
         DDSRecorder.configure(dds_version=self.version(), dds_mode=dds_mode,
                               threads=max_threads)
 
-    def version(self):  
-        return "2.9.0"
+    def version(self):
+        return dds.library_version()
     
     def calculatepar(self, hand, vuln, print_result=True):
         with ModelTimer.time_call('dds_par'):
