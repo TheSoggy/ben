@@ -483,7 +483,7 @@ class Models:
         use_suit_adjust = conf.getboolean('adjustments', 'use_suit_adjust', fallback=False)
 
         reward_lead_partner_suit = conf.getfloat('adjustments', 'reward_lead_partner_suit', fallback=0)
-        trump_lead_penalty_str = conf.get('bidding', 'trump_lead_penalty', fallback=None)
+        trump_lead_penalty_str = conf.get('adjustments', 'trump_lead_penalty', fallback=None)
         if trump_lead_penalty_str:
             trump_lead_penalty = [float(x) for x in trump_lead_penalty_str.strip('[]').split(',')]
         else:
