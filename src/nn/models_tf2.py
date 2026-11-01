@@ -91,7 +91,7 @@ def Trick(model_path):
 
 class Models:
 
-    def __init__(self, name, tf_version, model_version, n_cards_bidding, n_cards_play, bidder_model, opponent_model, contract_model, trick_model,binfo_model, lead_suit_model, lead_nt_model, sd_model, sd_model_no_lead, player_models, search_threshold, lead_threshold, 
+    def __init__(self, name, tf_version, model_version, n_cards_bidding, n_cards_play, bidder_model, opponent_model, contract_model, trick_model,binfo_model, lead_suit_model, lead_nt_model, sd_model, sd_model_no_lead, player_models, sampling_player_models, search_threshold, lead_threshold, 
                  no_search_threshold, eval_after_bid_count, eval_opening_bid,eval_pass_after_bid_count, no_biddingqualitycheck_after_bid_count, min_passout_candidates, min_rescue_reward, min_bidding_trust_for_sample_when_rescue, max_estimated_score,
                  lead_accept_nn, ns, ew, bba_our_cc, bba_their_cc, use_bba, consult_bba, bba_trust, use_bba_rollout, use_bba_to_count_aces, estimator, claim, play_reward_threshold_NN, play_reward_threshold_NN_factor_IMP, play_reward_threshold_NN_factor_MP, check_remaining_cards, check_discard, double_dummy, lead_from_pips_nt, lead_from_pips_suit, min_opening_leads, sample_hands_for_review, use_biddingquality, use_biddingquality_in_eval, 
                  double_dummy_calculator, opening_lead_included, use_probability, matchpoint, pimc_verbose, pimc_use_declaring, pimc_use_defending, pimc_use_discarding, pimc_wait, pimc_start_trick_declarer, pimc_start_trick_defender, pimc_stop_trick_declarer, pimc_stop_trick_defender, pimc_constraints, 
@@ -124,6 +124,7 @@ class Models:
         self.sd_model = sd_model
         self.sd_model_no_lead = sd_model_no_lead
         self.player_models = player_models
+        self.sampling_player_models = sampling_player_models
         self._lead_threshold = lead_threshold
         self._search_threshold = search_threshold
         self._no_search_threshold = no_search_threshold
@@ -282,7 +283,8 @@ class Models:
         # need separate traces.
         if self.player_models:
             x_play = np.zeros((1, 1, 298), dtype=f16)
-            for i, m in enumerate(self.player_models):
+            sampling_only = [m for m in self.sampling_player_models if m not in self.player_models]
+            for i, m in enumerate(self.player_models + sampling_only):
                 _safe(
                     f"player[{i}].pred_fun",
                     lambda m=m, x=x_play: m.pred_fun(x),
@@ -555,6 +557,20 @@ class Models:
         if verbose:
             print(f"loaded {len(player_models)} player models")
 
+        # The sampler scores every sample against the play so far, a batch of up to a few
+        # thousand rows per call, where the player picks its own card from one row. Naming
+        # sampling_<model> keys lets the sampler use a cheaper model than the player.
+        sampling_keys = [f"sampling_{name}" for name in player_names]
+        named = [conf.has_option('cardplay', key) for key in sampling_keys]
+        if any(named) and not all(named):
+            raise ValueError(f"[cardplay] names {sum(named)} of the 8 sampling_* models; name all of them or none")
+        if all(named):
+            sampling_player_models = [
+                BatchPlayer(name, path_provider.get_path(os.path.join(base_path, conf['cardplay'][key]))) for name, key in zip(player_names, sampling_keys)
+            ]
+        else:
+            sampling_player_models = player_models
+
         return cls(
             name=name,
             tf_version=tf_version,
@@ -571,6 +587,7 @@ class Models:
             sd_model=sd_model,
             sd_model_no_lead=sd_model_no_lead,
             player_models=player_models,
+            sampling_player_models=sampling_player_models,
             search_threshold=search_threshold,
             lead_threshold=lead_threshold,
             no_search_threshold=no_search_threshold,

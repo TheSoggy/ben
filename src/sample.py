@@ -1777,7 +1777,7 @@ class Sample:
             # 0-3 is for NT 4-7 is for suit
             # When the player is instantiated the right model is selected, but here we get it from the configuration
             # print("trick_i", trick_i, "len(card_played_current_trick)", len(card_played_current_trick), "n_tricks_pred", n_tricks_pred)
-            p_cards = self.predict_play(models.player_models[p_i+playermodelindex], states[p_i][:, :n_tricks_pred, :], play_cache)
+            p_cards = self.predict_play(models.sampling_player_models[p_i+playermodelindex], states[p_i][:, :n_tricks_pred, :], play_cache)
 
             # Convert the response to a 24 card deck
             # Get the shape dynamically
@@ -1860,7 +1860,7 @@ class Sample:
             # 0-3 is for NT 4-7 is for suit
             # When the player is instantiated the right model is selected, but here we get it from the configuration
             # print("trick_i", trick_i, "len(card_played_current_trick)", len(card_played_current_trick), "n_tricks_pred", n_tricks_pred)
-            p_cards = self.predict_play(models.player_models[p_i+playermodelindex], states[p_i][:, :n_tricks_pred, :], play_cache)
+            p_cards = self.predict_play(models.sampling_player_models[p_i+playermodelindex], states[p_i][:, :n_tricks_pred, :], play_cache)
 
             remaining_cards = states[p_i][:, trick_i, :32]
             # Convert to plain Python to avoid numpy scalar overhead in nested loops
@@ -1926,7 +1926,7 @@ class Sample:
             # 0-3 is for NT 4-7 is for suit
             # When the player is instantiated the right model is selected, but here we get it from the configuration
             # print("trick_i", trick_i, "len(card_played_current_trick)", len(card_played_current_trick), "n_tricks_pred", n_tricks_pred)
-            p_cards = self.predict_play(models.player_models[p_i+playermodelindex], states[p_i][:, :n_tricks_pred, :], play_cache)
+            p_cards = self.predict_play(models.sampling_player_models[p_i+playermodelindex], states[p_i][:, :n_tricks_pred, :], play_cache)
 
             # Check if opponent would have ruffed
             if strain_i != 0:
