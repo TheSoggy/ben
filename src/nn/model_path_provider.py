@@ -1,9 +1,12 @@
 import os
+import re
 import shutil
 import tempfile
 import atexit
 from typing import List, Optional
 import logging # Optional: for better logging
+
+import psutil
 
 # Configure basic logging if you want to see the info messages
 # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -86,9 +89,37 @@ class IsolatedModelPathProvider:
 
     Provides paths to these temporary copies for external loading.
     Ensures temporary directories are cleaned up on script exit.
+
+    Each process copies into its own directory, named
+    ``isolated_<file>_<pid>_<8 random chars>``. The copy came upstream with
+    "Isolated the models, when running multiple instances of BEN" (0.8.6.10):
+    no two processes ever open the same model file. A directory shared
+    between processes, or reading the original in place, would undo that,
+    so the per-process copy stays.
+
+    ``atexit`` is the only cleanup a process does for itself, and it never
+    runs after SIGKILL. Under gunicorn a worker killed by the container's
+    memory cap leaves its copies (~250 MB) behind and the arbiter forks a
+    replacement that copies again; a load test that OOM-killed workers
+    filled the disk in 40 minutes. So the first provider in each process
+    also removes the directories of processes that are gone
+    (``_sweep_orphans``). It removes only names of the exact shape above
+    whose pid is not running, plus a stale directory that carries this
+    process's own pid but is not one of its own copies (a reused pid).
+    A directory whose pid has been reused by a live process is left alone:
+    it leaks until that process exits, which bounds the leak rather than
+    risking a live copy. The pid test is only meaningful when every process
+    writing to the temp directory shares one pid namespace, which holds for
+    a container's private ``/tmp`` and for one Windows machine.
     """
     _temp_dirs: List[str] = []  # Class attribute to track all temp dirs
     _cleanup_registered: bool = False # Ensure atexit is registered only once
+    _swept_pid: Optional[int] = None # pid that last ran _sweep_orphans
+
+    # tempfile.mkdtemp appends exactly 8 characters drawn from [a-z0-9_]
+    # after the prefix "isolated_<file>_<pid>_". The suffix may itself
+    # contain underscores, so the pid is the digit run just before it.
+    _ORPHAN_NAME = re.compile(r"^isolated_.+_(\d+)_[a-z0-9_]{8}$")
 
     def __init__(self, base_temp_storage_path: Optional[str] = None):
         """
@@ -123,6 +154,51 @@ class IsolatedModelPathProvider:
         if not IsolatedModelPathProvider._cleanup_registered:
             atexit.register(self._cleanup_all)
             IsolatedModelPathProvider._cleanup_registered = True
+
+        # Once per process: a forked child inherits _swept_pid from its
+        # parent, so compare against the pid rather than a boolean.
+        if IsolatedModelPathProvider._swept_pid != os.getpid():
+            IsolatedModelPathProvider._swept_pid = os.getpid()
+            self._sweep_orphans(self._base_temp_storage_path or tempfile.gettempdir())
+
+    @classmethod
+    def _sweep_orphans(cls, base_dir: str) -> int:
+        """Remove model copies left by processes that no longer run.
+
+        Returns the number of directories removed. Never raises: a failed
+        sweep must not stop a worker from booting, so every failure is
+        logged and the sweep moves on.
+        """
+        removed = 0
+        own_pid = os.getpid()
+        own_dirs = {os.path.abspath(d) for d in cls._temp_dirs}
+        try:
+            entries = os.listdir(base_dir)
+        except OSError as e:
+            logging.warning(f"Could not list '{base_dir}' to remove orphaned model copies: {e}")
+            return 0
+
+        for name in entries:
+            match = cls._ORPHAN_NAME.match(name)
+            if not match:
+                continue
+            path = os.path.abspath(os.path.join(base_dir, name))
+            if not os.path.isdir(path) or os.path.islink(path):
+                continue
+            pid = int(match.group(1))
+            if pid == own_pid:
+                if path in own_dirs:
+                    continue
+            elif psutil.pid_exists(pid):
+                continue
+            try:
+                shutil.rmtree(path)
+                removed += 1
+                logging.warning(f"Removed orphaned model copy of pid {pid}: {path}")
+            except OSError as e:
+                logging.warning(f"Failed to remove orphaned model copy '{path}': {e}")
+
+        return removed
 
     def get_path(self, original_path: str) -> str:
         """
