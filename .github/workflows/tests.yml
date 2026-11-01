@@ -42,7 +42,7 @@ jobs:
           done
 
       - name: Install test dependencies
-        run: pip install pytest numpy colorama prometheus_client
+        run: pip install pytest numpy colorama prometheus_client psutil
 
       - name: Run tests
         run: python -m pytest tests/ -q
