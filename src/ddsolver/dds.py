@@ -67,6 +67,23 @@ except:  # could be mac/linux on aarch64
 
 #sys.stderr.write(f"Loaded lib { os.path.basename(DDS_PATH)}\n")
 
+
+def library_version():
+    """The loaded library's version, e.g. "3.1.0", so a log names the DDS actually in
+    use rather than the one this wrapper was written for. scripts/build_libdds.sh
+    writes it beside the library; without that file it is the 2.9.0 this wrapper
+    shipped with.
+
+    Not GetDDSInfo: in DDS 3.1, after SetMaxThreads, it reads per-thread memory past
+    the end of the one thread the library keeps, and segfaults depending on what
+    else is on the heap (every time under DDSolver's imports)."""
+    try:
+        with open(DDS_PATH + ".version") as f:
+            return f.read().split()[0]
+    except OSError:
+        return "2.9.0"
+
+
 DDS_VERSION = 20900    
 
 DDS_HANDS = 4
@@ -307,6 +324,21 @@ SolveAllBoards = dds.SolveAllBoards
 pointer to struct solvedBoards * solvedp"""
 SolveAllBoards.argtypes = [POINTER(boardsPBN), POINTER(solvedBoards)]
 SolveAllBoards.restype = c_int
+
+# DDS 3.x keeps SetMaxThreads as a no-op and runs SolveAllBoards on as many threads as
+# the hardware has; the cap moved to SolveAllBoardsN, per call. 2.9 has no
+# SolveAllBoardsN and honours SetMaxThreads.
+SolveAllBoardsN = getattr(dds, "SolveAllBoardsN", None)
+if SolveAllBoardsN is not None:
+    SolveAllBoardsN.argtypes = [POINTER(boardsPBN), POINTER(solvedBoards), c_int]
+    SolveAllBoardsN.restype = c_int
+
+
+def solve_all_boards(bop, solvedp, max_threads):
+    """SolveAllBoards with dds_max_threads honoured on either DDS (0 = automatic)."""
+    if SolveAllBoardsN is not None:
+        return SolveAllBoardsN(bop, solvedp, max_threads)
+    return SolveAllBoards(bop, solvedp)
 
 SolveAllChunks = dds.SolveAllChunks
 """pointer to struct boardsPBN * bop
