@@ -10,6 +10,7 @@ RUN apt-get update && \
       gcc g++ build-essential \
       libboost-thread-dev libdds-dev \
       libicu-dev \
+      libjemalloc2 \
       curl ca-certificates && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
@@ -42,6 +43,15 @@ RUN python3.12 -m pip install --break-system-packages --no-cache-dir -r requirem
 # Suppress TensorFlow/CUDA warnings (no GPU in container)
 ENV TF_CPP_MIN_LOG_LEVEL=2
 ENV CUDA_VISIBLE_DEVICES=""
+
+# jemalloc in place of glibc malloc. With glibc, each worker settles at a
+# high-water mark ~100 MB above the previous build's after the 8742 bidding
+# models arrived (not a leak: freed arenas are never returned), and four
+# workers under the 6 GB cap were OOM-killed 2-4 times per replay of
+# production traffic, each kill leaking its /tmp/isolated_* model copies.
+# With jemalloc: no kills over 4 passes, peak 5.41 GiB. Recycling workers
+# (--max-requests) also stopped the kills but made /play 19-30% slower.
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
 # Ben configuration via env vars (used by gunicorn.conf.py and gameapi.py argparse defaults)
 ENV BEN_HOST=0.0.0.0
