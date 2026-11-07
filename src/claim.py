@@ -115,15 +115,10 @@ class Claimer:
                 print("Claimcheck: shown out suits do not fit the hidden cards, ignoring them", shown_out_suits)
             forced_chosen, free_cards, n_free = [], hidden_cards, n_cards
 
-        card_combinations = list(combinations(free_cards, n_free))  # Get all possible splits
-
-        # Ensure the number of requested samples doesn't exceed available combinations
-        n_possible_samples = min(n_samples, len(card_combinations))
-
-        # Select unique samples without replacement
-        unique_combinations = random.sample(card_combinations, n_possible_samples)
-
-        for combination in unique_combinations:
+        # n_samples distinct splits, or all of them when there are fewer. Never
+        # list every split first: at trick one of a slam that is C(25, 12), 5.2
+        # million tuples, about 800 MB and two seconds for 50 samples.
+        for combination in _distinct_splits(free_cards, n_free, n_samples):
 
             # Create the hands based on the selected combination
             chosen_cards = forced_chosen + list(combination)
@@ -299,9 +294,18 @@ def _hidden_splits(hidden_cards, n_cards, n_samples):
     there are at most CLAIM_MAX_EXHAUSTIVE_SPLITS, else n_samples distinct ones."""
     if comb(len(hidden_cards), n_cards) <= max(CLAIM_MAX_EXHAUSTIVE_SPLITS, n_samples):
         return list(combinations(hidden_cards, n_cards))
+    return _distinct_splits(hidden_cards, n_cards, n_samples)
+
+def _distinct_splits(cards, n_cards, n_samples):
+    """min(n_samples, C(len(cards), n_cards)) distinct ways to choose n_cards of
+    cards, uniformly at random. Enumerates only when the splits are few; else draws
+    random subsets and drops repeats, so memory stays at n_samples splits."""
+    n_splits = comb(len(cards), n_cards)
+    if n_splits <= max(CLAIM_MAX_EXHAUSTIVE_SPLITS, n_samples):
+        return random.sample(list(combinations(cards, n_cards)), min(n_samples, n_splits))
     splits = set()
     while len(splits) < n_samples:
-        splits.add(tuple(sorted(random.sample(hidden_cards, n_cards))))
+        splits.add(tuple(sorted(random.sample(cards, n_cards))))
     return list(splits)
 
 def _hand_from_cards(n, cards):
